@@ -144,6 +144,26 @@ export interface Database {
           updated_at?: string
         }
       }
+      follows: {
+        Row: {
+          id: string
+          follower_id: string
+          following_id: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          follower_id: string
+          following_id: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          follower_id?: string
+          following_id?: string
+          created_at?: string
+        }
+      }
       orders: {
         Row: {
           id: string
@@ -201,5 +221,7 @@ export interface Database {
         }
       }
     }
+    Views: {}
+    Functions: {}
   }
 }
