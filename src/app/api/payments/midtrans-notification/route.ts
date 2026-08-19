@@ -48,73 +48,74 @@ function verifyNotification(notification: Record<string, unknown>): boolean {
 async function handlePaymentStatus(notification: MidtransNotification) {
   const { order_id, transaction_status, transaction_id } = notification
 
-  // Get order from database
-  const { data: order, error: fetchError } = await supabase
-    .from('orders')
-    .select('id, status, user_id')
-    .eq('id', order_id)
-    .single()
+  try {
+    // Get order from database
+    const { data: order, error: fetchError } = await supabase
+      .from('orders')
+      .select('id, status, user_id')
+      .eq('id', order_id)
+      .single()
 
-  if (fetchError || !order) {
-    console.error('Order not found:', order_id)
-    return
+    if (fetchError || !order) {
+      console.error('Order not found:', order_id)
+      return
+    }
+
+    // Determine order status based on transaction status
+    let orderStatus = 'pending'
+    
+    if (
+      transaction_status === 'capture' ||
+      transaction_status === 'settlement'
+    ) {
+      orderStatus = 'confirmed'
+    } else if (
+      transaction_status === 'deny' ||
+      transaction_status === 'cancel' ||
+      transaction_status === 'expire'
+    ) {
+      orderStatus = 'failed'
+    } else if (transaction_status === 'pending') {
+      orderStatus = 'pending_payment'
+    } else if (transaction_status === 'refund') {
+      orderStatus = 'refunded'
+    }
+
+    // Update order status
+    const { error: updateError } = await supabase
+      .from('orders')
+      .update({
+        status: orderStatus,
+        payment_status: transaction_status,
+        payment_confirmed_at: (orderStatus === 'confirmed') 
+          ? new Date().toISOString() 
+          : null,
+      })
+      .eq('id', order_id)
+
+    if (updateError) {
+      console.error('Error updating order:', updateError)
+      return
+    }
+
+    // Log notification for audit trail
+    try {
+      await supabase
+        .from('payment_notifications')
+        .insert({
+          order_id: order_id,
+          transaction_id: transaction_id,
+          status: transaction_status,
+          response_data: notification,
+        })
+    } catch (err) {
+      console.error('Error logging notification:', err)
+    }
+
+    console.log(`Order ${order_id} updated to status: ${orderStatus}`)
+  } catch (error) {
+    console.error('Error handling payment status:', error)
   }
-
-  // Determine order status based on transaction status
-  let orderStatus = 'pending'
-  
-  if (
-    transaction_status === 'capture' ||
-    transaction_status === 'settlement'
-  ) {
-    orderStatus = 'confirmed'
-  } else if (
-    transaction_status === 'deny' ||
-    transaction_status === 'cancel' ||
-    transaction_status === 'expire'
-  ) {
-    orderStatus = 'failed'
-  } else if (transaction_status === 'pending') {
-    orderStatus = 'pending_payment'
-  } else if (transaction_status === 'refund') {
-    orderStatus = 'refunded'
-  }
-
-  // Update order status
-  const { error: updateError } = await supabase
-    .from('orders')
-    .update({
-      status: orderStatus,
-      payment_status: transaction_status,
-      payment_confirmed_at: (orderStatus === 'confirmed') 
-        ? new Date().toISOString() 
-        : null,
-    })
-    .eq('id', order_id)
-
-  if (updateError) {
-    console.error('Error updating order:', updateError)
-    return
-  }
-
-  // Log notification for audit trail
-  await supabase
-    .from('payment_notifications')
-    .insert({
-      order_id: order_id,
-      transaction_id: transaction_id,
-      status: transaction_status,
-      response_data: notification,
-    })
-    .catch(err => console.error('Error logging notification:', err))
-
-  console.log(`Order ${order_id} updated to status: ${orderStatus}`)
-
-  // Here you could add additional business logic:
-  // - Send notifications to user
-  // - Update inventory
-  // - Send notification to seller
-  // - Trigger email confirmations
 }
 
 export async function POST(request: NextRequest) {
