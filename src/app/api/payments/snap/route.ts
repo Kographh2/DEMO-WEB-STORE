@@ -1,69 +1,287 @@
 import { NextRequest, NextResponse } from 'next/server'
-import midtransClient from 'midtrans-client'
+import { createClient } from '@supabase/supabase-js'
 
-export const runtime = 'nodejs'
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+)
 
-type SnapItem = { id: string; name: string; price: number; quantity: number }
+interface PaymentRequest {
+  orderId: string
+  amount: number
+  email: string
+  phone: string
+  customerName: string
+  paymentMethod: 'midtrans' | 'cod'
+  itemDetails: Array<{
+    id: string
+    price: number
+    quantity: number
+    name: string
+  }>
+  shippingAddress?: {
+    full_name: string
+    phone: string
+    email: string
+    address: string
+    city: string
+    postal_code: string
+  }
+}
+
+// Midtrans API configuration
+const MIDTRANS_SERVER_KEY = process.env.MIDTRANS_SERVER_KEY || ''
+const MIDTRANS_CLIENT_KEY = process.env.MIDTRANS_CLIENT_KEY || ''
+const MIDTRANS_API_URL = process.env.MIDTRANS_SANDBOX === 'true' 
+  ? 'https://app.sandbox.midtrans.com/snap/v1'
+  : 'https://app.midtrans.com/snap/v1'
 
 export async function POST(request: NextRequest) {
-  const serverKey = process.env.MIDTRANS_SERVER_KEY
-  const clientKey = process.env.MIDTRANS_CLIENT_KEY
-  if (!serverKey || !clientKey) {
-    return NextResponse.json({ error: 'Konfigurasi Midtrans belum lengkap.' }, { status: 503 })
-  }
-
   try {
-    const body = await request.json()
-    const { orderId, grossAmount, items, customer, taxAmount = 0, shippingAmount = 0 } = body as {
-      orderId?: string
-      grossAmount?: number
-      items?: SnapItem[]
-      taxAmount?: number
-      shippingAmount?: number
-      customer?: { fullName?: string; email?: string; phone?: string; address?: string; city?: string; postalCode?: string }
-    }
-    if (!orderId || typeof grossAmount !== 'number' || !Number.isInteger(grossAmount) || grossAmount < 1 || !Array.isArray(items) || items.length === 0) {
-      return NextResponse.json({ error: 'Data pembayaran tidak valid.' }, { status: 400 })
+    const body: PaymentRequest = await request.json()
+
+    if (!body.orderId || !body.amount || !body.email) {
+      return NextResponse.json(
+        { error: 'Missing required fields' },
+        { status: 400 }
+      )
     }
 
-    const extraItems = [
-      taxAmount > 0 ? { id: 'tax', name: 'Pajak', price: Math.round(taxAmount), quantity: 1 } : null,
-      shippingAmount > 0 ? { id: 'shipping', name: 'Ongkos kirim', price: Math.round(shippingAmount), quantity: 1 } : null,
-    ].filter(Boolean)
-    const lineItems = [...items.map((item) => ({
-      id: String(item.id).slice(0, 50), name: String(item.name).slice(0, 50), price: Math.round(item.price), quantity: Math.max(1, Math.floor(item.quantity)),
-    })), ...extraItems] as SnapItem[]
-    const itemTotal = lineItems.reduce((total, item) => total + item.price * item.quantity, 0)
-    if (itemTotal !== grossAmount) return NextResponse.json({ error: 'Total pembayaran tidak konsisten.' }, { status: 400 })
-    const snap = new midtransClient.Snap({
-      isProduction: process.env.MIDTRANS_IS_PRODUCTION === 'true',
-      serverKey,
-      clientKey,
-    })
-    const transaction = await snap.createTransaction({
-      transaction_details: { order_id: orderId, gross_amount: grossAmount },
-      item_details: lineItems,
-      callbacks: {
-        finish: `${(process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000').replace(/\/$/, '')}/orders`,
-        error: `${(process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000').replace(/\/$/, '')}/orders`,
-        pending: `${(process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000').replace(/\/$/, '')}/orders`,
-      },
-      customer_details: {
-        first_name: customer?.fullName || 'Pelanggan',
-        email: customer?.email || undefined,
-        phone: customer?.phone || undefined,
-        shipping_address: customer?.address ? {
-          first_name: customer?.fullName || 'Pelanggan',
-          address: customer.address,
-          city: customer.city || '',
-          postal_code: customer.postalCode || '',
-          country_code: 'IDN',
-        } : undefined,
-      },
-    })
-    return NextResponse.json({ token: transaction.token, redirectUrl: transaction.redirect_url })
+    // For COD payment, update order status directly
+    if (body.paymentMethod === 'cod') {
+      try {
+        const { error } = await supabase
+          .from('orders')
+          .update({
+            status: 'confirmed',
+            payment_method: 'cod',
+            payment_confirmed_at: new Date().toISOString(),
+            transaction_id: `COD-${body.orderId}-${Date.now()}`,
+          })
+          .eq('id', body.orderId)
+
+        if (error) throw error
+
+        return NextResponse.json({
+          success: true,
+          status: 'confirmed',
+          orderId: body.orderId,
+          message: 'Order confirmed with COD payment',
+          redirectUrl: `/payment-status/success?order_id=${body.orderId}`,
+        })
+      } catch (error) {
+        console.error('Error updating COD order:', error)
+        return NextResponse.json(
+          { error: 'Failed to process COD payment' },
+          { status: 500 }
+        )
+      }
+    }
+
+    // For Midtrans payment
+    if (body.paymentMethod === 'midtrans') {
+      try {
+        // Prepare Midtrans request
+        const snapRequest = {
+          transaction_details: {
+            order_id: body.orderId,
+            gross_amount: body.amount,
+          },
+          customer_details: {
+            first_name: body.customerName,
+            email: body.email,
+            phone: body.phone,
+            billing_address: body.shippingAddress ? {
+              first_name: body.shippingAddress.full_name,
+              phone: body.shippingAddress.phone,
+              address: body.shippingAddress.address,
+              city: body.shippingAddress.city,
+              postal_code: body.shippingAddress.postal_code,
+              country_code: 'IDN',
+            } : undefined,
+            shipping_address: body.shippingAddress ? {
+              first_name: body.shippingAddress.full_name,
+              phone: body.shippingAddress.phone,
+              address: body.shippingAddress.address,
+              city: body.shippingAddress.city,
+              postal_code: body.shippingAddress.postal_code,
+              country_code: 'IDN',
+            } : undefined,
+          },
+          item_details: body.itemDetails.map(item => ({
+            id: item.id,
+            price: Math.round(item.price),
+            quantity: item.quantity,
+            name: item.name,
+          })),
+          callbacks: {
+            finish: `${process.env.NEXT_PUBLIC_APP_URL}/payment-status/success?order_id=${body.orderId}`,
+            error: `${process.env.NEXT_PUBLIC_APP_URL}/payment-status/failed?order_id=${body.orderId}`,
+            pending: `${process.env.NEXT_PUBLIC_APP_URL}/payment-status/pending?order_id=${body.orderId}`,
+          },
+          expiry: {
+            unit: 'minutes',
+            length: 15,
+          },
+        }
+
+        // Call Midtrans API
+        const auth = Buffer.from(`${MIDTRANS_SERVER_KEY}:`).toString('base64')
+        const response = await fetch(`${MIDTRANS_API_URL}/transactions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Basic ${auth}`,
+            'User-Agent': 'KographStore/1.0',
+          },
+          body: JSON.stringify(snapRequest),
+        })
+
+        if (!response.ok) {
+          const error = await response.text()
+          console.error('Midtrans API error:', error)
+          throw new Error(`Midtrans API error: ${response.status}`)
+        }
+
+        const snapData = await response.json()
+
+        // Update order status to pending in database
+        await supabase
+          .from('orders')
+          .update({
+            status: 'pending_payment',
+            payment_method: 'midtrans',
+            transaction_id: snapData.transaction_id || '',
+            snap_token: snapData.token || '',
+            snap_redirect_url: snapData.redirect_url || '',
+            expires_at: new Date(Date.now() + 15 * 60000).toISOString(),
+          })
+          .eq('id', body.orderId)
+
+        return NextResponse.json({
+          success: true,
+          status: 'pending_payment',
+          token: snapData.token,
+          redirectUrl: snapData.redirect_url,
+          orderId: body.orderId,
+          transactionId: snapData.transaction_id,
+        })
+      } catch (error) {
+        console.error('Error processing Midtrans payment:', error)
+        return NextResponse.json(
+          { 
+            error: 'Failed to process payment', 
+            details: error instanceof Error ? error.message : 'Unknown error'
+          },
+          { status: 500 }
+        )
+      }
+    }
+
+    return NextResponse.json(
+      { error: 'Invalid payment method' },
+      { status: 400 }
+    )
   } catch (error) {
-    console.error('Midtrans Snap error:', error)
-    return NextResponse.json({ error: 'Gagal membuat transaksi Midtrans.' }, { status: 502 })
+    console.error('API error:', error)
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    )
+  }
+}
+
+// Polling endpoint to check payment status
+export async function GET(request: NextRequest) {
+  try {
+    const orderId = request.nextUrl.searchParams.get('orderId')
+
+    if (!orderId) {
+      return NextResponse.json(
+        { error: 'Order ID is required' },
+        { status: 400 }
+      )
+    }
+
+    // Get order from database
+    const { data: order, error } = await supabase
+      .from('orders')
+      .select('id, status, transaction_id, snap_token')
+      .eq('id', orderId)
+      .single()
+
+    if (error) {
+      return NextResponse.json(
+        { error: 'Order not found' },
+        { status: 404 }
+      )
+    }
+
+    // If payment is already confirmed, return success
+    if (order.status === 'confirmed') {
+      return NextResponse.json({
+        status: 'confirmed',
+        orderId: order.id,
+        redirectUrl: `/payment-status/success?order_id=${orderId}`,
+      })
+    }
+
+    // If it's pending, check with Midtrans
+    if (order.status === 'pending_payment' && order.transaction_id) {
+      try {
+        const auth = Buffer.from(`${MIDTRANS_SERVER_KEY}:`).toString('base64')
+        const response = await fetch(
+          `${MIDTRANS_API_URL}/transactions/${order.transaction_id}/status`,
+          {
+            headers: {
+              'Authorization': `Basic ${auth}`,
+              'User-Agent': 'KographStore/1.0',
+            },
+          }
+        )
+
+        if (response.ok) {
+          const statusData = await response.json()
+
+          // Update order status based on Midtrans response
+          let orderStatus = 'pending_payment'
+          if (statusData.transaction_status === 'settlement' || statusData.transaction_status === 'capture') {
+            orderStatus = 'confirmed'
+          } else if (statusData.transaction_status === 'deny' || statusData.transaction_status === 'cancel' || statusData.transaction_status === 'expire') {
+            orderStatus = 'failed'
+          }
+
+          if (orderStatus !== order.status) {
+            await supabase
+              .from('orders')
+              .update({
+                status: orderStatus,
+                payment_status: statusData.transaction_status,
+                payment_confirmed_at: orderStatus === 'confirmed' ? new Date().toISOString() : null,
+              })
+              .eq('id', orderId)
+          }
+
+          return NextResponse.json({
+            status: orderStatus,
+            midtransStatus: statusData.transaction_status,
+            orderId: order.id,
+          })
+        }
+      } catch (error) {
+        console.error('Error checking Midtrans status:', error)
+      }
+    }
+
+    return NextResponse.json({
+      status: order.status,
+      orderId: order.id,
+    })
+  } catch (error) {
+    console.error('GET API error:', error)
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    )
   }
 }
