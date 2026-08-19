@@ -113,7 +113,7 @@ export default function SellerProfilePage() {
         toast.success('Berhenti mengikuti seller')
       } else {
         // Follow
-        const { error } = await supabase
+        const { error } = await (supabase as any)
           .from('follows')
           .insert({
             follower_id: user.id,
