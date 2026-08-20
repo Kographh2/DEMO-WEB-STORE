@@ -12,20 +12,31 @@ interface OrderDetails {
   transaction_id: string
   total_amount: number
   status: string
+  payment_status: string
   created_at: string
   seller_name: string
   customer_name: string
   email: string
 }
 
+interface ShippingAddressShape {
+  full_name?: string
+  email?: string
+  phone?: string
+  address?: string
+  city?: string
+  postal_code?: string
+}
+
 export default function PaymentSuccessPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const { user } = useAuth()
+  const { user, profile } = useAuth()
   const [orderDetails, setOrderDetails] = useState<OrderDetails | null>(null)
   const [loading, setLoading] = useState(true)
   const orderId = searchParams.get('order_id')
   const transactionId = searchParams.get('transaction_id')
+  const isCod = searchParams.get('method') === 'cod'
 
   useEffect(() => {
     if (!user) {
@@ -41,36 +52,39 @@ export default function PaymentSuccessPage() {
           return
         }
 
-        const { data, error } = await supabase
+        const { data, error } = await (supabase as any)
           .from('orders')
-          .select(
-            `
-            id,
-            transaction_id,
-            total_amount,
-            status,
-            created_at,
-            seller_id,
-            user_id,
-            customer_name,
-            customer_email,
-            shop:shops(name)
-          `
-          )
+          .select('id, transaction_id, total_amount, status, payment_status, created_at, shop_id, shipping_address, shop:shops(name)')
           .eq('id', orderId)
           .single()
 
         if (error) throw error
+        if (!data) throw new Error('Order not found')
+
+        const orderRow = data as unknown as {
+          id: string
+          transaction_id: string | null
+          total_amount: number
+          status: string
+          payment_status: string
+          created_at: string
+          shipping_address: ShippingAddressShape | null
+          shop: { name: string } | { name: string }[] | null
+        }
+
+        const shopData = Array.isArray(orderRow.shop) ? orderRow.shop[0] : orderRow.shop
+        const contact = orderRow.shipping_address || {}
 
         setOrderDetails({
-          order_id: data.id,
-          transaction_id: data.transaction_id || transactionId || 'N/A',
-          total_amount: data.total_amount,
-          status: data.status,
-          created_at: data.created_at,
-          seller_name: data.shop?.name || 'Unknown',
-          customer_name: data.customer_name,
-          email: data.customer_email,
+          order_id: orderRow.id,
+          transaction_id: orderRow.transaction_id || transactionId || 'N/A',
+          total_amount: orderRow.total_amount,
+          status: orderRow.status,
+          payment_status: orderRow.payment_status,
+          created_at: orderRow.created_at,
+          seller_name: shopData?.name || 'Unknown',
+          customer_name: contact.full_name || profile?.full_name || '-',
+          email: contact.email || user?.email || '-',
         })
       } catch (error) {
         console.error('Error fetching order:', error)

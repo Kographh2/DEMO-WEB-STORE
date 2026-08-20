@@ -26,20 +26,40 @@ interface MidtransNotification {
 }
 
 /**
- * Verify Midtrans notification signature
+ * Verify Midtrans notification signature.
+ *
+ * SECURITY: Uses crypto.timingSafeEqual instead of `===` to compare the
+ * computed hash against the signature Midtrans sent. A plain string
+ * comparison short-circuits on the first mismatched byte, which leaks
+ * timing information an attacker could use to guess a valid signature
+ * byte-by-byte. timingSafeEqual always takes the same time regardless
+ * of where the mismatch occurs.
  */
 function verifyNotification(notification: Record<string, unknown>): boolean {
   const serverKey = process.env.MIDTRANS_SERVER_KEY || ''
-  
-  const orderId = notification.order_id as string
-  const statusCode = notification.status_code as string
-  const grossAmount = notification.gross_amount as number
-  const signatureKey = notification.signature_key as string
+
+  const orderId = String(notification.order_id ?? '')
+  const statusCode = String(notification.status_code ?? '')
+  const grossAmount = String(notification.gross_amount ?? '')
+  const signatureKey = String(notification.signature_key ?? '')
+
+  if (!orderId || !statusCode || !grossAmount || !signatureKey || !serverKey) {
+    return false
+  }
 
   const data = orderId + statusCode + grossAmount + serverKey
-  const hash = crypto.createHash('sha512').update(data).digest('hex')
+  const expectedHash = crypto.createHash('sha512').update(data).digest('hex')
 
-  return hash === signatureKey
+  const expectedBuffer = Buffer.from(expectedHash, 'hex')
+  const providedBuffer = Buffer.from(signatureKey, 'hex')
+
+  // timingSafeEqual throws if buffer lengths differ, so guard first —
+  // a length mismatch just means the signature is invalid.
+  if (expectedBuffer.length !== providedBuffer.length) {
+    return false
+  }
+
+  return crypto.timingSafeEqual(expectedBuffer, providedBuffer)
 }
 
 /**
@@ -50,47 +70,85 @@ async function handlePaymentStatus(notification: MidtransNotification) {
 
   try {
     // Get order from database
-    const { data: order, error: fetchError } = await supabase
+    const { data: orderData, error: fetchError } = await supabase
       .from('orders')
-      .select('id, status, user_id')
+      .select('id, status, payment_status, user_id, total_amount')
       .eq('id', order_id)
       .single()
 
-    if (fetchError || !order) {
+    if (fetchError || !orderData) {
       console.error('Order not found:', order_id)
       return
     }
 
-    // Determine order status based on transaction status
-    let orderStatus = 'pending'
-    
-    if (
-      transaction_status === 'capture' ||
-      transaction_status === 'settlement'
-    ) {
-      orderStatus = 'confirmed'
-    } else if (
-      transaction_status === 'deny' ||
-      transaction_status === 'cancel' ||
-      transaction_status === 'expire'
-    ) {
-      orderStatus = 'failed'
+    const order = orderData as unknown as {
+      id: string
+      status: string
+      payment_status: string
+      user_id: string
+      total_amount: number
+    }
+
+    // SECURITY: Defense in depth. Even though the signature already proves
+    // the notification came from Midtrans with our server key, also check
+    // that the amount Midtrans is reporting matches what we actually
+    // charged for this order. Protects against integration bugs or a
+    // mismatched order_id resolving to the wrong order.
+    const notifiedAmount = Math.round(Number(notification.gross_amount))
+    const expectedAmount = Math.round(order.total_amount)
+    if (Number.isFinite(notifiedAmount) && notifiedAmount !== expectedAmount) {
+      console.error(
+        `Amount mismatch on notification for order ${order_id}: notified ${notifiedAmount}, expected ${expectedAmount}`
+      )
+      return
+    }
+
+    // Idempotency: if we already recorded this order as paid, don't
+    // process a late/duplicate notification again (e.g. Midtrans retries
+    // notifications until it gets a 200 OK).
+    if (order.payment_status === 'paid' && transaction_status !== 'refund') {
+      console.log(`Order ${order_id} already paid, ignoring duplicate notification`)
+      return
+    }
+
+    // Map Midtrans's transaction_status to our schema's constrained enums:
+    //   orders.status:         pending | paid | processing | shipped | delivered | cancelled
+    //   orders.payment_status: pending | paid | failed | expired
+    let paymentStatus: 'pending' | 'paid' | 'failed' | 'expired' = 'pending'
+    let orderStatus: 'pending' | 'paid' | 'cancelled' | null = null
+
+    if (transaction_status === 'capture' || transaction_status === 'settlement') {
+      paymentStatus = 'paid'
+      orderStatus = 'paid'
+    } else if (transaction_status === 'deny' || transaction_status === 'cancel') {
+      paymentStatus = 'failed'
+      orderStatus = 'cancelled'
+    } else if (transaction_status === 'expire') {
+      paymentStatus = 'expired'
+      orderStatus = 'cancelled'
     } else if (transaction_status === 'pending') {
-      orderStatus = 'pending_payment'
-    } else if (transaction_status === 'refund') {
-      orderStatus = 'refunded'
+      paymentStatus = 'pending'
+      orderStatus = null // leave order.status untouched while awaiting payment
+    } else if (transaction_status === 'refund' || transaction_status === 'partial_refund') {
+      // No dedicated "refunded" state in the schema — treat as failed sale
+      // and cancel the order, while the raw status is preserved in
+      // payment_notifications for manual/admin follow-up.
+      paymentStatus = 'failed'
+      orderStatus = 'cancelled'
+    }
+
+    const updatePayload: Record<string, unknown> = {
+      payment_status: paymentStatus,
+      payment_confirmed_at: paymentStatus === 'paid' ? new Date().toISOString() : null,
+    }
+    if (orderStatus) {
+      updatePayload.status = orderStatus
     }
 
     // Update order status
     const { error: updateError } = await supabase
       .from('orders')
-      .update({
-        status: orderStatus,
-        payment_status: transaction_status,
-        payment_confirmed_at: (orderStatus === 'confirmed') 
-          ? new Date().toISOString() 
-          : null,
-      })
+      .update(updatePayload)
       .eq('id', order_id)
 
     if (updateError) {
@@ -112,7 +170,7 @@ async function handlePaymentStatus(notification: MidtransNotification) {
       console.error('Error logging notification:', err)
     }
 
-    console.log(`Order ${order_id} updated to status: ${orderStatus}`)
+    console.log(`Order ${order_id} payment_status -> ${paymentStatus}${orderStatus ? `, status -> ${orderStatus}` : ''}`)
   } catch (error) {
     console.error('Error handling payment status:', error)
   }

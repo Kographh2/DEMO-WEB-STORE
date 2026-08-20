@@ -11,10 +11,25 @@ import toast from 'react-hot-toast'
 
 type PaymentMethod = 'cod' | 'midtrans'
 
+interface MidtransSnapResult {
+  order_id?: string
+  transaction_id?: string
+  status_code?: string
+  transaction_status?: string
+  [key: string]: unknown
+}
+
+interface MidtransSnapOptions {
+  onSuccess?: (result: MidtransSnapResult) => void
+  onPending?: (result: MidtransSnapResult) => void
+  onError?: (result: MidtransSnapResult) => void
+  onClose?: () => void
+}
+
 declare global {
   interface Window {
     snap: {
-      pay: (token: string, options: Record<string, unknown>) => void
+      pay: (token: string, options: MidtransSnapOptions) => void
     }
   }
 }
@@ -110,10 +125,11 @@ export default function CheckoutPage() {
         return
       }
 
+      const shopId = items[0].product?.shop_id
       const sellerId = items[0].product?.shop?.owner_id
 
-      if (!sellerId) {
-        toast.error('Gagal memuat data seller. Silakan coba lagi.')
+      if (!shopId || !sellerId) {
+        toast.error('Gagal memuat data toko. Silakan coba lagi.')
         return
       }
 
@@ -135,41 +151,71 @@ export default function CheckoutPage() {
             postal_code: '',
           }
 
-      // Create order in database
-      const { data: order, error: orderError } = await supabase
+      // Create order in database. Only real `orders` columns are set here —
+      // status/payment_status are left at their DB defaults ('pending'/'pending').
+      // Contact details live inside shipping_address (jsonb) since the
+      // orders table has no dedicated customer_name/email/phone columns;
+      // the seller & buyer views already read shipping_address for this.
+      const { data: insertedOrder, error: orderError } = await (supabase as any)
         .from('orders')
         .insert({
           user_id: user.id,
           seller_id: sellerId,
-          status: 'pending',
+          shop_id: shopId,
           payment_method: paymentMethod,
-          total_amount: finalTotal,
           subtotal: totalAmount,
           tax_amount: tax,
-          shipping_amount: shipping,
-          customer_name: normalizedShippingAddress.full_name,
-          customer_email: normalizedShippingAddress.email,
-          customer_phone: normalizedShippingAddress.phone,
-          shipping_address: requiredShipping ? normalizedShippingAddress : null,
-          items: items.map((item) => ({
-            product_id: item.product_id,
-            quantity: item.quantity,
-            price: item.product?.price,
-            name: item.product?.name,
-          })),
+          shipping_cost: shipping,
+          total_amount: finalTotal,
+          shipping_address: normalizedShippingAddress,
         })
         .select('id')
         .single()
 
-      if (orderError) {
+      if (orderError || !insertedOrder) {
         console.error('Error creating order:', orderError)
         toast.error('Gagal membuat pesanan')
         return
       }
 
-      const orderId = order.id
+      const orderId = insertedOrder.id
 
-      // Process payment
+      // Insert line items into order_items so sellers, digital delivery,
+      // and receipts can read them independently of the cart.
+      const orderItemsPayload = items.map((item) => {
+        const unitPrice = item.product?.discount_price ?? item.product?.price ?? 0
+        return {
+          order_id: orderId,
+          product_id: item.product_id,
+          product_name: item.product?.name || 'Produk',
+          quantity: item.quantity,
+          price: unitPrice,
+          subtotal: unitPrice * item.quantity,
+        }
+      })
+
+      const { error: itemsError } = await (supabase as any).from('order_items').insert(orderItemsPayload)
+      if (itemsError) {
+        // The order itself was created successfully; log for investigation
+        // rather than blocking the buyer, since retrying would create a
+        // duplicate order.
+        console.error('Error creating order items:', itemsError)
+      }
+
+      // COD: the order is created as-is (status/payment_status stay
+      // 'pending'). Sellers confirm COD orders manually from their
+      // dashboard once the item is ready — no payment gateway involved,
+      // so there's nothing to call here.
+      if (paymentMethod === 'cod') {
+        clearCart()
+        toast.success('Pesanan berhasil dibuat! Siapkan pembayaran saat barang tiba.')
+        router.push(`/payment-status/success?order_id=${orderId}&method=cod`)
+        return
+      }
+
+      // Midtrans: ask the server to create the Snap transaction. The
+      // server re-verifies `amount` against the order's real total_amount
+      // in the database and rejects the request if they don't match.
       const paymentResponse = await fetch('/api/payments/snap', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -180,11 +226,11 @@ export default function CheckoutPage() {
           phone: normalizedShippingAddress.phone,
           customerName: normalizedShippingAddress.full_name,
           paymentMethod,
-          itemDetails: items.map((item) => ({
+          itemDetails: orderItemsPayload.map((item) => ({
             id: item.product_id,
-            price: item.product?.price || 0,
+            price: item.price,
             quantity: item.quantity,
-            name: item.product?.name || 'Product',
+            name: item.product_name,
           })),
           shippingAddress: requiredShipping ? normalizedShippingAddress : undefined,
         }),
@@ -198,32 +244,27 @@ export default function CheckoutPage() {
         return
       }
 
-      // Handle payment based on method
-      if (paymentMethod === 'cod') {
-        clearCart()
-        toast.success('Pesanan berhasil dibuat! Silakan lanjutkan dengan pembayaran di tempat.')
-        router.push(`/payment-status/success?order_id=${orderId}`)
-      } else if (paymentMethod === 'midtrans') {
-        if (paymentData.token && window.snap) {
-          // Open Midtrans Snap modal
-          window.snap.pay(paymentData.token, {
-            onSuccess: function (result) {
-              clearCart()
-              router.push(`/payment-status/success?order_id=${orderId}&transaction_id=${result.transaction_id}`)
-            },
-            onPending: function (result) {
-              router.push(`/payment-status/pending?order_id=${orderId}&transaction_id=${result.transaction_id}`)
-            },
-            onError: function (result) {
-              router.push(`/payment-status/failed?order_id=${orderId}&reason=${result.status_code}`)
-            },
-            onClose: function () {
-              toast.error('Pembayaran dibatalkan')
-            },
-          })
-        } else {
-          toast.error('Gagal memproses pembayaran. Silakan coba lagi.')
-        }
+      if (paymentData.token && window.snap) {
+        // Open Midtrans Snap modal
+        window.snap.pay(paymentData.token, {
+          onSuccess: (result) => {
+            clearCart()
+            router.push(`/payment-status/success?order_id=${orderId}&transaction_id=${result.transaction_id ?? ''}`)
+          },
+          onPending: (result) => {
+            clearCart()
+            router.push(`/payment-status/pending?order_id=${orderId}&transaction_id=${result.transaction_id ?? ''}`)
+          },
+          onError: (result) => {
+            router.push(`/payment-status/failed?order_id=${orderId}&reason=${result.status_code ?? 'unknown'}`)
+          },
+          onClose: () => {
+            toast.error('Pembayaran belum selesai. Anda dapat melanjutkan dari halaman status pesanan.')
+            router.push(`/payment-status/pending?order_id=${orderId}`)
+          },
+        })
+      } else {
+        toast.error('Gagal memproses pembayaran. Silakan coba lagi.')
       }
     } catch (error) {
       console.error('Checkout error:', error)

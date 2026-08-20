@@ -70,6 +70,11 @@ export interface Order {
   total_amount: number
   shipping_address: any
   tracking_number: string | null
+  transaction_id?: string | null
+  snap_token?: string | null
+  snap_redirect_url?: string | null
+  payment_confirmed_at?: string | null
+  expires_at?: string | null
   created_at: string
   updated_at: string
 }

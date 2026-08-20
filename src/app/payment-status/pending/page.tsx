@@ -12,17 +12,27 @@ interface PendingOrderDetails {
   transaction_id: string
   total_amount: number
   status: string
+  payment_status: string
   created_at: string
-  expires_at: string
+  expires_at: string | null
   payment_method: string
   customer_name: string
   email: string
 }
 
+interface ShippingAddressShape {
+  full_name?: string
+  email?: string
+  phone?: string
+  address?: string
+  city?: string
+  postal_code?: string
+}
+
 export default function PaymentPendingPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const { user } = useAuth()
+  const { user, profile } = useAuth()
   const [orderDetails, setOrderDetails] = useState<PendingOrderDetails | null>(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -44,37 +54,49 @@ export default function PaymentPendingPage() {
           return
         }
 
-        const { data, error } = await supabase
+        const { data, error } = await (supabase as any)
           .from('orders')
-          .select(
-            `
-            id,
-            transaction_id,
-            total_amount,
-            status,
-            payment_method,
-            created_at,
-            expires_at,
-            customer_name,
-            customer_email
-          `
-          )
+          .select('id, transaction_id, total_amount, status, payment_status, payment_method, created_at, expires_at, shipping_address')
           .eq('id', orderId)
           .single()
 
         if (error) throw error
+        if (!data) throw new Error('Order not found')
+
+        const orderRow = data as unknown as {
+          id: string
+          transaction_id: string | null
+          total_amount: number
+          status: string
+          payment_status: string
+          payment_method: string
+          created_at: string
+          expires_at: string | null
+          shipping_address: ShippingAddressShape | null
+        }
+
+        const contact = orderRow.shipping_address || {}
 
         setOrderDetails({
-          order_id: data.id,
-          transaction_id: data.transaction_id || transactionId || 'N/A',
-          total_amount: data.total_amount,
-          status: data.status,
-          payment_method: data.payment_method,
-          created_at: data.created_at,
-          expires_at: data.expires_at,
-          customer_name: data.customer_name,
-          email: data.customer_email,
+          order_id: orderRow.id,
+          transaction_id: orderRow.transaction_id || transactionId || 'N/A',
+          total_amount: orderRow.total_amount,
+          status: orderRow.status,
+          payment_status: orderRow.payment_status,
+          payment_method: orderRow.payment_method,
+          created_at: orderRow.created_at,
+          expires_at: orderRow.expires_at,
+          customer_name: contact.full_name || profile?.full_name || '-',
+          email: contact.email || user?.email || '-',
         })
+
+        // If payment already resolved by the time this page loads
+        // (e.g. webhook beat the redirect), skip straight to the right page.
+        if (orderRow.payment_status === 'paid') {
+          router.replace(`/payment-status/success?order_id=${orderId}`)
+        } else if (orderRow.payment_status === 'failed' || orderRow.payment_status === 'expired') {
+          router.replace(`/payment-status/failed?order_id=${orderId}&reason=${orderRow.payment_status}`)
+        }
       } catch (error) {
         console.error('Error fetching order:', error)
         toast.error('Gagal memuat detail pesanan')
@@ -84,7 +106,7 @@ export default function PaymentPendingPage() {
     }
 
     fetchOrderDetails()
-  }, [orderId, user, router, transactionId])
+  }, [orderId, user, profile, router, transactionId])
 
   // Timer countdown
   useEffect(() => {
@@ -92,7 +114,7 @@ export default function PaymentPendingPage() {
 
     const updateTimer = () => {
       const now = new Date().getTime()
-      const expiry = new Date(orderDetails.expires_at).getTime()
+      const expiry = new Date(orderDetails.expires_at as string).getTime()
       const diff = expiry - now
 
       if (diff <= 0) {
@@ -113,28 +135,54 @@ export default function PaymentPendingPage() {
     return () => clearInterval(interval)
   }, [orderDetails?.expires_at])
 
+  // Real-time & polling status check: ask the server (which itself queries
+  // Midtrans if needed) rather than reading `orders` directly, so the
+  // authoritative status logic lives in one place (the API route).
+  useEffect(() => {
+    if (!orderId) return
+
+    const checkStatus = async () => {
+      try {
+        const response = await fetch(`/api/payments/snap?orderId=${orderId}`)
+        if (!response.ok) return
+        const data = await response.json()
+
+        if (data.status === 'paid') {
+          toast.success('Pembayaran telah dikonfirmasi!')
+          router.push(data.redirectUrl || `/payment-status/success?order_id=${orderId}`)
+        } else if (data.status === 'failed' || data.status === 'expired') {
+          toast.error('Pembayaran gagal atau kedaluwarsa')
+          router.push(data.redirectUrl || `/payment-status/failed?order_id=${orderId}`)
+        }
+      } catch (error) {
+        console.error('Error auto-checking status:', error)
+      }
+    }
+
+    const interval = setInterval(checkStatus, 5000)
+    return () => clearInterval(interval)
+  }, [orderId, router])
+
   const handleRefreshStatus = async () => {
     setRefreshing(true)
     try {
       if (!orderId) return
 
-      const { data, error } = await supabase
-        .from('orders')
-        .select('status')
-        .eq('id', orderId)
-        .single()
+      const response = await fetch(`/api/payments/snap?orderId=${orderId}`)
+      const data = await response.json()
 
-      if (error) throw error
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to check status')
+      }
 
-      // Check if payment has been confirmed
-      if (data.status === 'confirmed') {
+      if (data.status === 'paid') {
         toast.success('Pembayaran telah dikonfirmasi!')
-        router.push(`/payment-status/success?order_id=${orderId}`)
-      } else if (data.status === 'failed') {
+        router.push(data.redirectUrl || `/payment-status/success?order_id=${orderId}`)
+      } else if (data.status === 'failed' || data.status === 'expired') {
         toast.error('Pembayaran gagal')
-        router.push(`/payment-status/failed?order_id=${orderId}`)
+        router.push(data.redirectUrl || `/payment-status/failed?order_id=${orderId}`)
       } else {
-        toast.success('Status pesanan diperbarui')
+        toast.success('Status masih menunggu pembayaran')
       }
     } catch (error) {
       console.error('Error refreshing status:', error)
@@ -207,20 +255,22 @@ export default function PaymentPendingPage() {
         )}
 
         {/* Countdown Timer */}
-        <div className="bg-amber-50 border-2 border-amber-200 rounded-lg p-4 mb-6">
-          <div className="flex items-start gap-3">
-            <Clock className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
-            <div>
-              <p className="font-semibold text-amber-900 text-sm">Sisa Waktu Pembayaran</p>
-              <p className="text-2xl font-bold text-amber-600 mt-2 font-mono">
-                {timeLeft || 'Memproses...'}
-              </p>
-              <p className="text-xs text-amber-800 mt-2">
-                Selesaikan pembayaran sebelum waktu berakhir
-              </p>
+        {orderDetails?.expires_at && (
+          <div className="bg-amber-50 border-2 border-amber-200 rounded-lg p-4 mb-6">
+            <div className="flex items-start gap-3">
+              <Clock className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold text-amber-900 text-sm">Sisa Waktu Pembayaran</p>
+                <p className="text-2xl font-bold text-amber-600 mt-2 font-mono">
+                  {timeLeft || 'Memproses...'}
+                </p>
+                <p className="text-xs text-amber-800 mt-2">
+                  Selesaikan pembayaran sebelum waktu berakhir
+                </p>
+              </div>
             </div>
           </div>
-        </div>
+        )}
 
         {/* Information Box */}
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
@@ -229,7 +279,9 @@ export default function PaymentPendingPage() {
             <div>
               <p className="font-semibold text-blue-900 text-sm">Catatan Penting</p>
               <p className="text-sm text-blue-800 mt-2">
-                Segera selesaikan pembayaran melalui metode yang telah dipilih. Pesanan akan otomatis dibatalkan jika pembayaran tidak selesai dalam waktu yang ditentukan.
+                Halaman ini otomatis memeriksa status pembayaran Anda setiap beberapa detik.
+                Segera selesaikan pembayaran melalui metode yang telah dipilih. Pesanan akan
+                otomatis dibatalkan jika pembayaran tidak selesai dalam waktu yang ditentukan.
               </p>
             </div>
           </div>

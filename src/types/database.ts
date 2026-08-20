@@ -180,6 +180,11 @@ export interface Database {
           total_amount: number
           shipping_address: Json
           tracking_number: string | null
+          transaction_id: string | null
+          snap_token: string | null
+          snap_redirect_url: string | null
+          payment_confirmed_at: string | null
+          expires_at: string | null
           created_at: string
           updated_at: string
         }
@@ -198,6 +203,11 @@ export interface Database {
           total_amount: number
           shipping_address: Json
           tracking_number?: string | null
+          transaction_id?: string | null
+          snap_token?: string | null
+          snap_redirect_url?: string | null
+          payment_confirmed_at?: string | null
+          expires_at?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -216,8 +226,71 @@ export interface Database {
           total_amount?: number
           shipping_address?: Json
           tracking_number?: string | null
+          transaction_id?: string | null
+          snap_token?: string | null
+          snap_redirect_url?: string | null
+          payment_confirmed_at?: string | null
+          expires_at?: string | null
           created_at?: string
           updated_at?: string
+        }
+      }
+      order_items: {
+        Row: {
+          id: string
+          order_id: string
+          product_id: string
+          product_name: string
+          quantity: number
+          price: number
+          subtotal: number
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          order_id: string
+          product_id: string
+          product_name: string
+          quantity: number
+          price: number
+          subtotal: number
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          order_id?: string
+          product_id?: string
+          product_name?: string
+          quantity?: number
+          price?: number
+          subtotal?: number
+          created_at?: string
+        }
+      }
+      payment_notifications: {
+        Row: {
+          id: string
+          order_id: string
+          transaction_id: string
+          status: string
+          response_data: Json | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          order_id: string
+          transaction_id: string
+          status: string
+          response_data?: Json | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          order_id?: string
+          transaction_id?: string
+          status?: string
+          response_data?: Json | null
+          created_at?: string
         }
       }
     }
