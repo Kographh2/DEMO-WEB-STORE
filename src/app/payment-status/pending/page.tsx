@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Clock, AlertCircle, Home, RefreshCw } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
@@ -29,7 +29,7 @@ interface ShippingAddressShape {
   postal_code?: string
 }
 
-export default function PaymentPendingPage() {
+function PaymentPendingContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { user, profile } = useAuth()
@@ -325,5 +325,24 @@ export default function PaymentPendingPage() {
         </div>
       </div>
     </div>
+  )
+}
+
+function PaymentPendingLoadingFallback() {
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-amber-50 to-white flex items-center justify-center">
+      <div className="text-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-amber-600 mx-auto mb-4"></div>
+        <p className="text-gray-600">Memuat halaman...</p>
+      </div>
+    </div>
+  )
+}
+
+export default function PaymentPendingPage() {
+  return (
+    <Suspense fallback={<PaymentPendingLoadingFallback />}>
+      <PaymentPendingContent />
+    </Suspense>
   )
 }

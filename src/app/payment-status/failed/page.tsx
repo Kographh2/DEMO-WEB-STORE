@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { XCircle, AlertCircle, Home, RotateCcw } from 'lucide-react'
 import { useAuth } from '@/components/auth-provider'
@@ -11,7 +11,7 @@ interface FailureDetails {
   timestamp?: string
 }
 
-export default function PaymentFailedPage() {
+function PaymentFailedContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { user } = useAuth()
@@ -153,5 +153,24 @@ export default function PaymentFailedPage() {
         </div>
       </div>
     </div>
+  )
+}
+
+function PaymentFailedLoadingFallback() {
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-red-50 to-white flex items-center justify-center">
+      <div className="text-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-red-600 mx-auto mb-4"></div>
+        <p className="text-gray-600">Memuat halaman...</p>
+      </div>
+    </div>
+  )
+}
+
+export default function PaymentFailedPage() {
+  return (
+    <Suspense fallback={<PaymentFailedLoadingFallback />}>
+      <PaymentFailedContent />
+    </Suspense>
   )
 }
