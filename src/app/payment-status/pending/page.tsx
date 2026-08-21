@@ -217,32 +217,32 @@ function PaymentPendingContent() {
 
         {/* Order Details */}
         {orderDetails && (
-          <div className="bg-white rounded-lg shadow-md p-6 mb-6 space-y-4">
-            <div className="border-b border-gray-200 pb-4">
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-6 space-y-4">
+            <div className="border-b border-gray-100 pb-4">
               <p className="text-sm text-gray-500 mb-1">Nomor Pesanan</p>
               <p className="font-semibold text-gray-900 break-all">{orderDetails.order_id}</p>
             </div>
 
-            <div className="border-b border-gray-200 pb-4">
+            <div className="border-b border-gray-100 pb-4">
               <p className="text-sm text-gray-500 mb-1">ID Transaksi</p>
               <p className="font-semibold text-gray-900 break-all">{orderDetails.transaction_id}</p>
             </div>
 
-            <div className="border-b border-gray-200 pb-4">
+            <div className="border-b border-gray-100 pb-4">
               <p className="text-sm text-gray-500 mb-1">Jumlah Pembayaran</p>
               <p className="text-2xl font-bold text-amber-600">
                 Rp{orderDetails.total_amount.toLocaleString('id-ID')}
               </p>
             </div>
 
-            <div className="border-b border-gray-200 pb-4">
+            <div className="border-b border-gray-100 pb-4">
               <p className="text-sm text-gray-500 mb-1">Metode Pembayaran</p>
               <p className="font-semibold text-gray-900 capitalize">
                 {orderDetails.payment_method}
               </p>
             </div>
 
-            <div className="border-b border-gray-200 pb-4">
+            <div className="border-b border-gray-100 pb-4">
               <p className="text-sm text-gray-500 mb-1">Nama Pembeli</p>
               <p className="font-semibold text-gray-900">{orderDetails.customer_name}</p>
             </div>
@@ -256,7 +256,7 @@ function PaymentPendingContent() {
 
         {/* Countdown Timer */}
         {orderDetails?.expires_at && (
-          <div className="bg-amber-50 border-2 border-amber-200 rounded-lg p-4 mb-6">
+          <div className="bg-amber-50 border-2 border-amber-100 rounded-2xl p-4 mb-6">
             <div className="flex items-start gap-3">
               <Clock className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
               <div>
@@ -273,12 +273,12 @@ function PaymentPendingContent() {
         )}
 
         {/* Information Box */}
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+        <div className="bg-primary-50 border border-primary-100 rounded-2xl p-4 mb-6">
           <div className="flex items-start gap-3">
-            <AlertCircle className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+            <AlertCircle className="w-5 h-5 text-primary-600 flex-shrink-0 mt-0.5" />
             <div>
-              <p className="font-semibold text-blue-900 text-sm">Catatan Penting</p>
-              <p className="text-sm text-blue-800 mt-2">
+              <p className="font-semibold text-primary-900 text-sm">Catatan Penting</p>
+              <p className="text-sm text-primary-800 mt-2">
                 Halaman ini otomatis memeriksa status pembayaran Anda setiap beberapa detik.
                 Segera selesaikan pembayaran melalui metode yang telah dipilih. Pesanan akan
                 otomatis dibatalkan jika pembayaran tidak selesai dalam waktu yang ditentukan.
@@ -292,7 +292,7 @@ function PaymentPendingContent() {
           <button
             onClick={handleRefreshStatus}
             disabled={refreshing}
-            className="w-full bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white font-semibold py-3 rounded-lg transition flex items-center justify-center gap-2"
+            className="btn-primary w-full flex items-center justify-center gap-2 disabled:opacity-60"
           >
             <RefreshCw className={`w-5 h-5 ${refreshing ? 'animate-spin' : ''}`} />
             {refreshing ? 'Memperbarui...' : 'Cek Status Pembayaran'}
@@ -300,14 +300,14 @@ function PaymentPendingContent() {
 
           <button
             onClick={() => router.push('/checkout')}
-            className="w-full bg-gray-200 hover:bg-gray-300 text-gray-900 font-semibold py-3 rounded-lg transition"
+            className="btn-secondary w-full"
           >
             Kembali ke Checkout
           </button>
 
           <button
             onClick={() => router.push('/')}
-            className="w-full bg-gray-100 hover:bg-gray-200 text-gray-900 font-semibold py-3 rounded-lg transition flex items-center justify-center gap-2"
+            className="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium py-3 rounded-xl transition-colors flex items-center justify-center gap-2"
           >
             <Home className="w-5 h-5" />
             Kembali ke Beranda
@@ -318,7 +318,7 @@ function PaymentPendingContent() {
         <div className="mt-8 text-center">
           <p className="text-sm text-gray-600">
             Butuh bantuan? Hubungi{' '}
-            <a href="mailto:support@kographstore.com" className="text-green-600 hover:underline font-semibold">
+            <a href="mailto:support@kographstore.com" className="text-primary-600 hover:underline font-semibold">
               support@kographstore.com
             </a>
           </p>

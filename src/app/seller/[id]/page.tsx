@@ -188,6 +188,9 @@ export default function SellerProfilePage() {
                       <span className="font-semibold">{shop.total_reviews || 0}</span> Ulasan
                     </div>
                     <div className="text-gray-600">
+                      <span className="font-semibold">{shop.total_sold ?? 0}</span> Terjual
+                    </div>
+                    <div className="text-gray-600">
                       <span className="font-semibold">{followerCount}</span> Pengikut
                     </div>
                   </div>
@@ -195,7 +198,7 @@ export default function SellerProfilePage() {
                   {shop.is_verified && (
                     <div className="inline-flex items-center gap-2 bg-green-100 text-green-700 px-3 py-1 rounded-full text-sm">
                       <CheckCircle2 size={16} />
-                      Terverifikasi
+                      Toko Terverifikasi
                     </div>
                   )}
                 </div>

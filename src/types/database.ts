@@ -53,8 +53,10 @@ export interface Database {
           logo_url: string | null
           banner_url: string | null
           is_verified: boolean
+          auto_verified: boolean
           rating: number
           total_reviews: number
+          total_sold: number
           created_at: string
           updated_at: string
         }
@@ -66,8 +68,10 @@ export interface Database {
           logo_url?: string | null
           banner_url?: string | null
           is_verified?: boolean
+          auto_verified?: boolean
           rating?: number
           total_reviews?: number
+          total_sold?: number
           created_at?: string
           updated_at?: string
         }
@@ -79,8 +83,10 @@ export interface Database {
           logo_url?: string | null
           banner_url?: string | null
           is_verified?: boolean
+          auto_verified?: boolean
           rating?: number
           total_reviews?: number
+          total_sold?: number
           created_at?: string
           updated_at?: string
         }

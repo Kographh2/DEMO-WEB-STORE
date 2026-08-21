@@ -27,6 +27,39 @@ export default function OrdersPage() {
     if (!user && !loading) router.replace('/')
   }, [user, loading, router])
 
+  // Same background reconciliation as the profile page's order tab —
+  // keeps a Midtrans order from being stuck showing "Menunggu" forever
+  // just because the buyer never revisited the dedicated pending page.
+  useEffect(() => {
+    const pendingMidtransOrders = orders.filter(
+      (o) => o.payment_method === 'midtrans' && o.payment_status === 'pending'
+    )
+    if (pendingMidtransOrders.length === 0) return
+
+    let cancelled = false
+    const reconcile = async () => {
+      for (const order of pendingMidtransOrders) {
+        try {
+          const res = await fetch(`/api/payments/snap?orderId=${order.id}`)
+          if (!res.ok) continue
+          const data = await res.json()
+          if (!cancelled && (data.status === 'paid' || data.status === 'failed' || data.status === 'expired')) {
+            loadOrders()
+          }
+        } catch {
+          // Silent — best-effort background reconciliation.
+        }
+      }
+    }
+    reconcile()
+    const interval = setInterval(reconcile, 8000)
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orders.map((o) => `${o.id}:${o.payment_status}`).join(',')])
+
   const loadOrders = async () => {
     try {
       const { data } = await (supabase as any)

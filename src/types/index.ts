@@ -18,8 +18,10 @@ export interface Shop {
   logo_url: string | null
   banner_url: string | null
   is_verified: boolean
+  auto_verified: boolean
   rating: number
   total_reviews: number
+  total_sold: number
   created_at: string
   updated_at: string
 }
@@ -93,12 +95,14 @@ export interface OrderItem {
 export interface Review {
   id: string
   product_id: string
+  order_id: string | null
   user_id: string
   rating: number
   comment: string
   images: string[]
   is_verified: boolean
   created_at: string
+  updated_at: string
 }
 
 export interface Follow {

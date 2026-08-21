@@ -1,17 +1,17 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
 import { 
   User, Settings, ShoppingBag, Heart, LogOut, ChevronRight,
   Shield, Bell, Globe, Moon, HelpCircle, FileText, Edit,
-  Camera
+  Camera, Loader2, Clock, CheckCircle, XCircle, Truck, AlertCircle
 } from 'lucide-react'
 import { useAuth } from '@/components/auth-provider'
 import AuthModal from '@/components/auth-modal'
-import { formatCurrency } from '@/lib/utils'
+import { formatCurrency, uploadAvatar } from '@/lib/utils'
 import { supabase } from '@/lib/supabase'
 import { Order } from '@/types'
 import toast from 'react-hot-toast'
@@ -23,6 +23,8 @@ export default function ProfilePage() {
   const [isEditing, setIsEditing] = useState(false)
   const [editName, setEditName] = useState('')
   const [editUsername, setEditUsername] = useState('')
+  const [uploadingAvatar, setUploadingAvatar] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const router = useRouter()
   const { user, profile, loading, signOut, updateProfile } = useAuth()
 
@@ -42,13 +44,7 @@ export default function ProfilePage() {
     }
   }, [user, profile, loading])
 
-  useEffect(() => {
-    if (user) {
-      loadOrders()
-    }
-  }, [user])
-
-  const loadOrders = async () => {
+  const loadOrders = useCallback(async () => {
     try {
       const { data } = await (supabase as any)
         .from('orders')
@@ -60,6 +56,74 @@ export default function ProfilePage() {
       setOrders((data as Order[]) || [])
     } catch (error) {
       console.error('Error loading orders:', error)
+    }
+  }, [user])
+
+  useEffect(() => {
+    if (user) {
+      loadOrders()
+    }
+  }, [user, loadOrders])
+
+  // Automatically reconcile any order still waiting on a Midtrans
+  // payment — without this, an order can sit at "pending" forever
+  // unless the buyer happens to revisit the dedicated pending-payment
+  // page (which triggers the same check). This runs quietly in the
+  // background whenever the order list is open.
+  useEffect(() => {
+    const pendingMidtransOrders = orders.filter(
+      (o) => o.payment_method === 'midtrans' && o.payment_status === 'pending'
+    )
+    if (pendingMidtransOrders.length === 0) return
+
+    let cancelled = false
+    const reconcile = async () => {
+      for (const order of pendingMidtransOrders) {
+        try {
+          const res = await fetch(`/api/payments/snap?orderId=${order.id}`)
+          if (!res.ok) continue
+          const data = await res.json()
+          if (!cancelled && (data.status === 'paid' || data.status === 'failed' || data.status === 'expired')) {
+            loadOrders()
+          }
+        } catch {
+          // Silent — this is a best-effort background reconciliation.
+        }
+      }
+    }
+    reconcile()
+    const interval = setInterval(reconcile, 8000)
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orders.map((o) => `${o.id}:${o.payment_status}`).join(',')])
+
+  const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file || !user) return
+
+    if (file.size > 2 * 1024 * 1024) {
+      toast.error('Ukuran file maksimal 2MB')
+      return
+    }
+    if (!file.type.startsWith('image/')) {
+      toast.error('File harus berupa gambar (JPG/PNG)')
+      return
+    }
+
+    setUploadingAvatar(true)
+    try {
+      const avatarUrl = await uploadAvatar(file, user.id)
+      await updateProfile({ avatar_url: avatarUrl })
+      toast.success('Foto profil berhasil diperbarui')
+    } catch (error) {
+      console.error('Error uploading avatar:', error)
+      toast.error('Gagal mengunggah foto profil')
+    } finally {
+      setUploadingAvatar(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
     }
   }
 
@@ -134,13 +198,21 @@ export default function ProfilePage() {
     { icon: FileText, label: 'Syarat & Ketentuan', href: '/terms' },
   ]
 
-  const getStatusColor = (status: string) => {
+  const getStatusInfo = (status: string) => {
     switch (status) {
-      case 'delivered': return 'bg-green-100 text-green-700'
-      case 'shipped': return 'bg-blue-100 text-blue-700'
-      case 'processing': return 'bg-yellow-100 text-yellow-700'
-      case 'paid': return 'bg-purple-100 text-purple-700'
-      default: return 'bg-gray-100 text-gray-700'
+      case 'delivered':
+        return { color: 'bg-green-100 text-green-700', label: 'Terkirim' }
+      case 'shipped':
+        return { color: 'bg-primary-100 text-primary-700', label: 'Dikirim' }
+      case 'processing':
+        return { color: 'bg-amber-100 text-amber-700', label: 'Diproses' }
+      case 'paid':
+        return { color: 'bg-purple-100 text-purple-700', label: 'Dibayar' }
+      case 'cancelled':
+        return { color: 'bg-red-100 text-red-700', label: 'Dibatalkan' }
+      case 'pending':
+      default:
+        return { color: 'bg-gray-100 text-gray-600', label: 'Menunggu Pembayaran' }
     }
   }
 
@@ -173,9 +245,26 @@ export default function ProfilePage() {
               ) : (
                 profile.full_name?.[0]?.toUpperCase() || 'U'
               )}
-              <button className="absolute bottom-0 right-0 w-6 h-6 bg-primary-600 rounded-full flex items-center justify-center">
-                <Camera size={12} className="text-white" />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploadingAvatar}
+                className="absolute bottom-0 right-0 w-7 h-7 bg-primary-600 rounded-full flex items-center justify-center border-2 border-white"
+                aria-label="Ganti foto profil"
+              >
+                {uploadingAvatar ? (
+                  <Loader2 size={12} className="text-white animate-spin" />
+                ) : (
+                  <Camera size={12} className="text-white" />
+                )}
               </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={handleAvatarChange}
+              />
             </div>
             <div className="flex-1">
               {isEditing ? (
@@ -279,7 +368,9 @@ export default function ProfilePage() {
                 <p className="text-gray-600">Belum ada pesanan</p>
               </div>
             ) : (
-              orders.map((order) => (
+              orders.map((order) => {
+                const statusInfo = getStatusInfo(order.status)
+                return (
                 <motion.div
                   key={order.id}
                   initial={{ opacity: 0, y: 20 }}
@@ -290,8 +381,8 @@ export default function ProfilePage() {
                     <span className="text-xs text-gray-500">
                       {new Date(order.created_at).toLocaleDateString('id-ID')}
                     </span>
-                    <span className={`text-xs px-2 py-1 rounded-full ${getStatusColor(order.status)}`}>
-                      {order.status}
+                    <span className={`text-xs px-2 py-1 rounded-full font-medium ${statusInfo.color}`}>
+                      {statusInfo.label}
                     </span>
                   </div>
                   <div className="flex items-center justify-between">
@@ -302,7 +393,7 @@ export default function ProfilePage() {
                     <p className="font-bold text-sm">{formatCurrency(order.total_amount)}</p>
                   </div>
                 </motion.div>
-              ))
+              )})
             )}
           </div>
         )}

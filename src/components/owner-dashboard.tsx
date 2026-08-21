@@ -32,6 +32,7 @@ export default function OwnerDashboard() {
   const [broadcast, setBroadcast] = useState({ subject: '', body: '' })
   const [sendingBroadcast, setSendingBroadcast] = useState(false)
   const [editingUser, setEditingUser] = useState<string | null>(null)
+  const [verifyingShopId, setVerifyingShopId] = useState<string | null>(null)
   const router = useRouter()
   const { user, profile } = useAuth()
 
@@ -136,6 +137,40 @@ export default function OwnerDashboard() {
     } catch (error) {
       console.error('Error updating user role:', error)
       toast.error('Gagal mengubah role user')
+    }
+  }
+
+  // Manual verify/unverify toggle. Owners can always override — this
+  // never conflicts with the automatic sales-threshold verification
+  // trigger in the database, which only ever turns verification ON.
+  const handleToggleShopVerification = async (shop: Shop) => {
+    setVerifyingShopId(shop.id)
+    try {
+      const nextVerified = !shop.is_verified
+      const { error } = await (supabase as any)
+        .from('shops')
+        .update({
+          is_verified: nextVerified,
+          // Unverifying always clears the auto-verified flag too, so a
+          // shop the owner manually turned off doesn't display as
+          // "auto-verified" the next time it happens to pass the sales
+          // check (it will simply be silently re-verified by the
+          // trigger if it still clears the threshold, but won't be
+          // mislabeled as auto in the meantime).
+          auto_verified: nextVerified ? shop.auto_verified : false,
+        })
+        .eq('id', shop.id)
+
+      if (error) throw error
+      toast.success(nextVerified ? 'Toko berhasil diverifikasi' : 'Verifikasi toko dibatalkan')
+      setShops((prev) =>
+        prev.map((s) => (s.id === shop.id ? { ...s, is_verified: nextVerified, auto_verified: nextVerified ? s.auto_verified : false } : s))
+      )
+    } catch (error) {
+      console.error('Error toggling shop verification:', error)
+      toast.error('Gagal mengubah status verifikasi toko')
+    } finally {
+      setVerifyingShopId(null)
     }
   }
 
@@ -344,7 +379,9 @@ export default function OwnerDashboard() {
                     <th className="pb-3 font-medium">Owner</th>
                     <th className="pb-3 font-medium">Status</th>
                     <th className="pb-3 font-medium">Rating</th>
+                    <th className="pb-3 font-medium">Terjual</th>
                     <th className="pb-3 font-medium">Dibuat</th>
+                    <th className="pb-3 pr-6 font-medium text-right">Aksi</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -355,15 +392,40 @@ export default function OwnerDashboard() {
                       </td>
                       <td className="py-4 text-sm text-gray-600">{shop.owner_id}</td>
                       <td className="py-4">
-                        <span className={`text-xs px-2 py-1 rounded-full ${
-                          shop.is_verified ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'
-                        }`}>
-                          {shop.is_verified ? 'Terverifikasi' : 'Menunggu'}
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span className={`text-xs px-2 py-1 rounded-full ${
+                            shop.is_verified ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'
+                          }`}>
+                            {shop.is_verified ? 'Terverifikasi' : 'Belum'}
+                          </span>
+                          {shop.is_verified && shop.auto_verified && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary-50 text-primary-600 font-medium" title="Terverifikasi otomatis oleh sistem karena penjualan tinggi">
+                              Auto
+                            </span>
+                          )}
+                        </div>
                       </td>
-                      <td className="py-4 text-sm">{shop.rating.toFixed(1)}</td>
+                      <td className="py-4 text-sm">⭐ {shop.rating.toFixed(1)} ({shop.total_reviews})</td>
+                      <td className="py-4 text-sm text-gray-600">{shop.total_sold ?? 0}</td>
                       <td className="py-4 text-sm text-gray-600">
                         {new Date(shop.created_at).toLocaleDateString('id-ID')}
+                      </td>
+                      <td className="py-4 pr-6 text-right">
+                        <button
+                          onClick={() => handleToggleShopVerification(shop)}
+                          disabled={verifyingShopId === shop.id}
+                          className={`text-xs font-medium px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 ${
+                            shop.is_verified
+                              ? 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                              : 'bg-primary-600 text-white hover:bg-primary-700'
+                          }`}
+                        >
+                          {verifyingShopId === shop.id
+                            ? 'Memproses...'
+                            : shop.is_verified
+                              ? 'Batalkan Verifikasi'
+                              : 'Verifikasi Manual'}
+                        </button>
                       </td>
                     </tr>
                   ))}

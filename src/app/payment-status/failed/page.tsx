@@ -62,9 +62,9 @@ function PaymentFailedContent() {
         </div>
 
         {/* Failure Details */}
-        <div className="bg-white rounded-lg shadow-md p-6 mb-6 space-y-4">
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-6 space-y-4">
           {failureDetails.reason && (
-            <div className="border-b border-gray-200 pb-4">
+            <div className="border-b border-gray-100 pb-4">
               <p className="text-sm text-gray-500 mb-1">Alasan Kegagalan</p>
               <p className="font-semibold text-red-600">
                 {getReasonDisplay(failureDetails.reason)}
@@ -73,7 +73,7 @@ function PaymentFailedContent() {
           )}
 
           {failureDetails.amount && failureDetails.amount !== '0' && (
-            <div className="border-b border-gray-200 pb-4">
+            <div className="border-b border-gray-100 pb-4">
               <p className="text-sm text-gray-500 mb-1">Jumlah Transaksi</p>
               <p className="text-2xl font-bold text-gray-900">
                 Rp{parseInt(failureDetails.amount).toLocaleString('id-ID')}
@@ -92,7 +92,7 @@ function PaymentFailedContent() {
         </div>
 
         {/* Warning Box */}
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
+        <div className="bg-amber-50 border border-amber-100 rounded-2xl p-4 mb-6">
           <div className="flex items-start gap-3">
             <AlertCircle className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" />
             <div>
@@ -111,7 +111,7 @@ function PaymentFailedContent() {
         <div className="space-y-3">
           <button
             onClick={() => router.push('/checkout')}
-            className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 rounded-lg transition flex items-center justify-center gap-2"
+            className="btn-primary w-full flex items-center justify-center gap-2"
           >
             <RotateCcw className="w-5 h-5" />
             Coba Pembayaran Lagi
@@ -119,14 +119,14 @@ function PaymentFailedContent() {
 
           <button
             onClick={() => router.push('/cart')}
-            className="w-full bg-gray-200 hover:bg-gray-300 text-gray-900 font-semibold py-3 rounded-lg transition"
+            className="btn-secondary w-full"
           >
             Kembali ke Keranjang
           </button>
 
           <button
             onClick={() => router.push('/')}
-            className="w-full bg-gray-100 hover:bg-gray-200 text-gray-900 font-semibold py-3 rounded-lg transition flex items-center justify-center gap-2"
+            className="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium py-3 rounded-xl transition-colors flex items-center justify-center gap-2"
           >
             <Home className="w-5 h-5" />
             Kembali ke Beranda
@@ -140,12 +140,12 @@ function PaymentFailedContent() {
           </p>
           <div className="space-y-1">
             <p>
-              <a href="mailto:support@kographstore.com" className="text-green-600 hover:underline font-semibold">
+              <a href="mailto:support@kographstore.com" className="text-primary-600 hover:underline font-semibold">
                 support@kographstore.com
               </a>
             </p>
             <p>
-              <a href="https://wa.me/62xxxxxxxxxx" className="text-green-600 hover:underline font-semibold">
+              <a href="https://wa.me/62xxxxxxxxxx" className="text-primary-600 hover:underline font-semibold">
                 WhatsApp Support
               </a>
             </p>

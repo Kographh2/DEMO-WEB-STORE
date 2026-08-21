@@ -110,9 +110,9 @@ function PaymentSuccessContent() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-b from-green-50 to-white flex items-center justify-center">
+      <div className="min-h-screen bg-gradient-to-b from-primary-50 to-white flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto mb-4"></div>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4"></div>
           <p className="text-gray-600">Memproses hasil pembayaran...</p>
         </div>
       </div>
@@ -120,12 +120,12 @@ function PaymentSuccessContent() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-green-50 to-white py-8 px-4">
+    <div className="min-h-screen bg-gradient-to-b from-primary-50 to-white py-8 px-4">
       <div className="max-w-md mx-auto">
         {/* Success Icon */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-20 h-20 bg-green-100 rounded-full mb-4">
-            <CheckCircle className="w-12 h-12 text-green-600" />
+          <div className="inline-flex items-center justify-center w-20 h-20 bg-primary-100 rounded-full mb-4">
+            <CheckCircle className="w-12 h-12 text-primary-600" />
           </div>
           <h1 className="text-3xl font-bold text-gray-900 mb-2">Pembayaran Berhasil!</h1>
           <p className="text-gray-600">Pesanan Anda telah dikonfirmasi dan sedang diproses</p>
@@ -133,35 +133,35 @@ function PaymentSuccessContent() {
 
         {/* Order Details */}
         {orderDetails && (
-          <div className="bg-white rounded-lg shadow-md p-6 mb-6 space-y-4">
-            <div className="border-b border-gray-200 pb-4">
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-6 space-y-4">
+            <div className="border-b border-gray-100 pb-4">
               <p className="text-sm text-gray-500 mb-1">Nomor Pesanan</p>
               <p className="font-semibold text-gray-900 break-all">{orderDetails.order_id}</p>
             </div>
 
-            <div className="border-b border-gray-200 pb-4">
+            <div className="border-b border-gray-100 pb-4">
               <p className="text-sm text-gray-500 mb-1">ID Transaksi</p>
               <p className="font-semibold text-gray-900 break-all">{orderDetails.transaction_id}</p>
             </div>
 
-            <div className="border-b border-gray-200 pb-4">
+            <div className="border-b border-gray-100 pb-4">
               <p className="text-sm text-gray-500 mb-1">Total Pembayaran</p>
-              <p className="text-2xl font-bold text-green-600">
+              <p className="text-2xl font-bold text-primary-600">
                 Rp{orderDetails.total_amount.toLocaleString('id-ID')}
               </p>
             </div>
 
-            <div className="border-b border-gray-200 pb-4">
+            <div className="border-b border-gray-100 pb-4">
               <p className="text-sm text-gray-500 mb-1">Nama Pembeli</p>
               <p className="font-semibold text-gray-900">{orderDetails.customer_name}</p>
             </div>
 
-            <div className="border-b border-gray-200 pb-4">
+            <div className="border-b border-gray-100 pb-4">
               <p className="text-sm text-gray-500 mb-1">Email</p>
               <p className="font-semibold text-gray-900">{orderDetails.email}</p>
             </div>
 
-            <div className="border-b border-gray-200 pb-4">
+            <div className="border-b border-gray-100 pb-4">
               <p className="text-sm text-gray-500 mb-1">Toko Penjual</p>
               <p className="font-semibold text-gray-900">{orderDetails.seller_name}</p>
             </div>
@@ -176,13 +176,15 @@ function PaymentSuccessContent() {
         )}
 
         {/* Status Info */}
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+        <div className="bg-primary-50 border border-primary-100 rounded-2xl p-4 mb-6">
           <div className="flex items-start gap-3">
-            <Clock className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+            <Clock className="w-5 h-5 text-primary-600 flex-shrink-0 mt-0.5" />
             <div>
-              <p className="font-semibold text-blue-900 text-sm">Status Pesanan</p>
-              <p className="text-sm text-blue-800 mt-1">
-                Pesanan Anda sedang diproses oleh penjual. Anda akan menerima notifikasi saat pesanan dikirim.
+              <p className="font-semibold text-primary-900 text-sm">Status Pesanan</p>
+              <p className="text-sm text-primary-800 mt-1">
+                {isCod
+                  ? 'Pesanan Anda sedang disiapkan oleh penjual untuk dikirim. Siapkan pembayaran tunai saat barang tiba.'
+                  : 'Pesanan Anda sedang diproses oleh penjual. Anda akan menerima notifikasi saat pesanan dikirim.'}
               </p>
             </div>
           </div>
@@ -192,25 +194,25 @@ function PaymentSuccessContent() {
         <div className="space-y-3">
           <button
             onClick={handleDownloadInvoice}
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-lg transition flex items-center justify-center gap-2"
+            className="btn-primary w-full flex items-center justify-center gap-2"
           >
-            <Download className="w-5 h-5" />
+            <Download size={18} />
             Unduh Invoice
           </button>
 
           <button
             onClick={() => router.push('/orders')}
-            className="w-full bg-gray-200 hover:bg-gray-300 text-gray-900 font-semibold py-3 rounded-lg transition flex items-center justify-center gap-2"
+            className="btn-secondary w-full flex items-center justify-center gap-2"
           >
-            <Clock className="w-5 h-5" />
+            <Clock size={18} />
             Lihat Status Pesanan
           </button>
 
           <button
             onClick={() => router.push('/')}
-            className="w-full bg-gray-100 hover:bg-gray-200 text-gray-900 font-semibold py-3 rounded-lg transition flex items-center justify-center gap-2"
+            className="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium py-3 rounded-xl transition-colors flex items-center justify-center gap-2"
           >
-            <Home className="w-5 h-5" />
+            <Home size={18} />
             Kembali ke Beranda
           </button>
         </div>
@@ -219,7 +221,7 @@ function PaymentSuccessContent() {
         <div className="mt-8 text-center">
           <p className="text-sm text-gray-600">
             Butuh bantuan? Hubungi{' '}
-            <a href="mailto:support@kographstore.com" className="text-green-600 hover:underline font-semibold">
+            <a href="mailto:support@kographstore.com" className="text-primary-600 hover:underline font-semibold">
               support@kographstore.com
             </a>
           </p>
@@ -231,9 +233,9 @@ function PaymentSuccessContent() {
 
 function PaymentSuccessLoadingFallback() {
   return (
-    <div className="min-h-screen bg-gradient-to-b from-green-50 to-white flex items-center justify-center">
+    <div className="min-h-screen bg-gradient-to-b from-primary-50 to-white flex items-center justify-center">
       <div className="text-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto mb-4"></div>
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4"></div>
         <p className="text-gray-600">Memuat halaman...</p>
       </div>
     </div>

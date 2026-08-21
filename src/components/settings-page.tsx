@@ -1,15 +1,16 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { motion } from 'framer-motion'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
 import { 
   ArrowLeft, Save, User, Shield, Store, 
-  ShoppingBag, DollarSign, Settings 
+  ShoppingBag, DollarSign, Settings, Camera, Loader2
 } from 'lucide-react'
 import { useAuth } from '@/components/auth-provider'
 import { supabase } from '@/lib/supabase'
+import { uploadAvatar } from '@/lib/utils'
 import toast from 'react-hot-toast'
 
 export default function SettingsPage() {
@@ -18,6 +19,8 @@ export default function SettingsPage() {
   const [language, setLanguage] = useState('id')
   const [notificationsEnabled, setNotificationsEnabled] = useState(true)
   const [loading, setLoading] = useState(false)
+  const [uploadingAvatar, setUploadingAvatar] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const router = useRouter()
   const { user, profile, updateProfile, loading: authLoading } = useAuth()
 
@@ -31,6 +34,33 @@ export default function SettingsPage() {
   useEffect(() => {
     if (!authLoading && !user) router.replace('/')
   }, [authLoading, user, router])
+
+  const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file || !user) return
+
+    if (file.size > 2 * 1024 * 1024) {
+      toast.error('Ukuran file maksimal 2MB')
+      return
+    }
+    if (!file.type.startsWith('image/')) {
+      toast.error('File harus berupa gambar (JPG/PNG)')
+      return
+    }
+
+    setUploadingAvatar(true)
+    try {
+      const avatarUrl = await uploadAvatar(file, user.id)
+      await updateProfile({ avatar_url: avatarUrl })
+      toast.success('Foto profil berhasil diperbarui')
+    } catch (error) {
+      console.error('Error uploading avatar:', error)
+      toast.error('Gagal mengunggah foto profil')
+    } finally {
+      setUploadingAvatar(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
 
   const handleSave = async () => {
     setLoading(true)
@@ -77,12 +107,36 @@ export default function SettingsPage() {
                 ) : (
                   fullName?.[0]?.toUpperCase() || 'U'
                 )}
-                <button className="absolute bottom-0 right-0 w-6 h-6 bg-primary-600 rounded-full flex items-center justify-center">
-                  <Settings size={12} className="text-white" />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploadingAvatar}
+                  className="absolute bottom-0 right-0 w-7 h-7 bg-primary-600 rounded-full flex items-center justify-center border-2 border-white"
+                  aria-label="Ganti foto profil"
+                >
+                  {uploadingAvatar ? (
+                    <Loader2 size={12} className="text-white animate-spin" />
+                  ) : (
+                    <Camera size={12} className="text-white" />
+                  )}
                 </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleAvatarChange}
+                />
               </div>
               <div>
-                <p className="font-medium text-gray-900">Ganti Foto</p>
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploadingAvatar}
+                  className="font-medium text-primary-600 text-sm hover:underline"
+                >
+                  {uploadingAvatar ? 'Mengunggah...' : 'Ganti Foto'}
+                </button>
                 <p className="text-sm text-gray-500">JPG, PNG. Maks 2MB</p>
               </div>
             </div>

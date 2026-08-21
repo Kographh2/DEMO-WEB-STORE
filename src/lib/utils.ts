@@ -1,5 +1,6 @@
 import { clsx, type ClassValue } from 'clsx'
 import { twMerge } from 'tailwind-merge'
+import { supabase } from '@/lib/supabase'
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -44,4 +45,26 @@ export function generateOrderId() {
   const timestamp = Date.now().toString(36)
   const random = Math.random().toString(36).substring(2, 8)
   return `ORD-${timestamp}-${random}`.toUpperCase()
+}
+
+/**
+ * Uploads an avatar image to the `avatars` Supabase Storage bucket
+ * under the current user's own folder (required by the bucket's RLS
+ * policy: `(storage.foldername(name))[1] = auth.uid()`), and returns
+ * the public URL to store on the profile.
+ */
+export async function uploadAvatar(file: File, userId: string): Promise<string> {
+  const fileExt = file.name.split('.').pop() || 'jpg'
+  const filePath = `${userId}/avatar-${Date.now()}.${fileExt}`
+
+  const { error: uploadError } = await supabase.storage
+    .from('avatars')
+    .upload(filePath, file, { upsert: true, cacheControl: '3600' })
+
+  if (uploadError) {
+    throw uploadError
+  }
+
+  const { data } = supabase.storage.from('avatars').getPublicUrl(filePath)
+  return data.publicUrl
 }
