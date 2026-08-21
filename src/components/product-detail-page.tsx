@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { useParams, useRouter } from 'next/navigation'
 import Image from 'next/image'
-import { Star, ShoppingCart, Heart, Share2, Truck, Shield, ArrowLeft, Minus, Plus, Check } from 'lucide-react'
+import { Star, ShoppingCart, Heart, Share2, Truck, Shield, ArrowLeft, Minus, Plus, Check, BadgeCheck, Store, ChevronRight } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { Product, Shop, Review } from '@/types'
 import { formatCurrency } from '@/lib/utils'
@@ -17,6 +17,7 @@ export default function ProductDetailPage({ productId }: { productId: string }) 
   const [product, setProduct] = useState<(Product & { shop: Shop }) | null>(null)
   const [reviews, setReviews] = useState<(Review & { user: { full_name: string; avatar_url: string | null } })[]>([])
   const [relatedProducts, setRelatedProducts] = useState<(Product & { shop: Shop })[]>([])
+  const [shopFollowerCount, setShopFollowerCount] = useState(0)
   const [loading, setLoading] = useState(true)
   const [quantity, setQuantity] = useState(1)
   const [showAuthModal, setShowAuthModal] = useState(false)
@@ -67,6 +68,15 @@ export default function ProductDetailPage({ productId }: { productId: string }) 
 
       if (productData) {
         setProduct(productData as Product & { shop: Shop })
+
+        const shopOwnerId = (productData as any).shop?.owner_id
+        if (shopOwnerId) {
+          const { count } = await supabase
+            .from('follows')
+            .select('*', { count: 'exact', head: true })
+            .eq('following_id', shopOwnerId)
+          setShopFollowerCount(count || 0)
+        }
         
         const { data: reviewsData } = await supabase
           .from('reviews')
@@ -120,11 +130,27 @@ export default function ProductDetailPage({ productId }: { productId: string }) 
     if (!user || !product) return
 
     try {
+      // Find a qualifying order for this exact product — the reviews
+      // RLS policy only allows the insert at all if one exists (delivered
+      // /paid/processing/shipped order containing this product), so if we
+      // can find it here, this is a genuine verified purchase and we can
+      // mark it as such instead of leaving is_verified/order_id empty.
+      const { data: qualifyingOrderItem } = await (supabase as any)
+        .from('order_items')
+        .select('order_id, orders!inner(user_id, status)')
+        .eq('product_id', product.id)
+        .eq('orders.user_id', user.id)
+        .in('orders.status', ['delivered', 'paid', 'processing', 'shipped'])
+        .limit(1)
+        .maybeSingle()
+
       const { error } = await (supabase as any).from('reviews').insert({
         product_id: product.id,
         user_id: user.id,
         rating: newReview.rating,
         comment: newReview.comment,
+        order_id: qualifyingOrderItem?.order_id ?? null,
+        is_verified: !!qualifyingOrderItem,
       })
 
       if (error) throw error
@@ -217,8 +243,11 @@ export default function ProductDetailPage({ productId }: { productId: string }) 
             className="flex flex-col"
           >
             <div className="mb-4">
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-sm text-primary-600 font-medium">
+              <button
+                onClick={() => router.push(`/seller/${(product.shop as any).owner_id}`)}
+                className="flex items-center gap-2 mb-2 group"
+              >
+                <span className="text-sm text-primary-600 font-medium group-hover:underline">
                   {product.shop.name}
                 </span>
                 {product.shop.is_verified && (
@@ -226,7 +255,7 @@ export default function ProductDetailPage({ productId }: { productId: string }) 
                     Terverifikasi
                   </span>
                 )}
-              </div>
+              </button>
               <h1 className="text-2xl font-bold text-gray-900 mb-2">{product.name}</h1>
               
               <div className="flex items-center gap-4 mb-4">
@@ -313,6 +342,36 @@ export default function ProductDetailPage({ productId }: { productId: string }) 
                 <span>Pengiriman Aman</span>
               </div>
             </div>
+
+            {/* Shop Summary — makes the seller checkable, not just a
+                name: rating, sales, followers, and a direct link to
+                their full profile with all their listed products. */}
+            <button
+              onClick={() => router.push(`/seller/${(product.shop as any).owner_id}`)}
+              className="mt-4 flex items-center justify-between gap-3 bg-gray-50 hover:bg-gray-100 transition-colors rounded-2xl p-4 text-left"
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center flex-shrink-0">
+                  {(product.shop as any).logo_url ? (
+                    <img src={(product.shop as any).logo_url} alt={product.shop.name} className="w-full h-full object-cover rounded-xl" />
+                  ) : (
+                    <Store size={20} className="text-white" />
+                  )}
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <p className="font-semibold text-sm text-gray-900 truncate">{product.shop.name}</p>
+                    {product.shop.is_verified && <BadgeCheck size={14} className="text-primary-600 flex-shrink-0" />}
+                  </div>
+                  <p className="text-xs text-gray-500">
+                    ⭐ {product.shop.rating?.toFixed(1) ?? '0.0'} · {(product.shop as any).total_sold ?? 0} terjual · {shopFollowerCount} pengikut
+                  </p>
+                </div>
+              </div>
+              <span className="flex items-center gap-1 text-xs font-medium text-primary-600 flex-shrink-0">
+                Kunjungi Toko <ChevronRight size={14} />
+              </span>
+            </button>
           </motion.div>
         </div>
 
@@ -419,19 +478,32 @@ export default function ProductDetailPage({ productId }: { productId: string }) 
                   reviews.map((review) => (
                     <div key={review.id} className="border-b border-gray-100 pb-4 last:border-0">
                       <div className="flex items-center gap-3 mb-2">
-                        <div className="w-8 h-8 bg-primary-100 rounded-full flex items-center justify-center text-primary-700 font-medium text-sm">
+                        <div className="w-8 h-8 bg-primary-100 rounded-full flex items-center justify-center text-primary-700 font-medium text-sm flex-shrink-0">
                           {review.user.full_name?.[0]?.toUpperCase() || 'U'}
                         </div>
-                        <div>
-                          <p className="font-medium text-sm">{review.user.full_name}</p>
-                          <div className="flex items-center gap-1">
-                            {[...Array(5)].map((_, i) => (
-                              <Star
-                                key={i}
-                                size={12}
-                                className={i < review.rating ? 'text-yellow-400 fill-yellow-400' : 'text-gray-300'}
-                              />
-                            ))}
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="font-medium text-sm">{review.user.full_name}</p>
+                            {review.is_verified && (
+                              <span className="inline-flex items-center gap-1 text-[11px] font-medium text-green-700 bg-green-50 px-1.5 py-0.5 rounded-full">
+                                <BadgeCheck size={12} />
+                                Pembeli Terverifikasi
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1">
+                              {[...Array(5)].map((_, i) => (
+                                <Star
+                                  key={i}
+                                  size={12}
+                                  className={i < review.rating ? 'text-yellow-400 fill-yellow-400' : 'text-gray-300'}
+                                />
+                              ))}
+                            </div>
+                            <span className="text-[11px] text-gray-400">
+                              {new Date(review.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}
+                            </span>
                           </div>
                         </div>
                       </div>

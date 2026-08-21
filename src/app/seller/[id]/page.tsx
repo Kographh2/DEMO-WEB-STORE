@@ -234,7 +234,9 @@ export default function SellerProfilePage() {
 
       {/* Products */}
       <div className="max-w-4xl mx-auto px-4 py-8">
-        <h2 className="text-2xl font-bold text-gray-900 mb-6">Produk Toko</h2>
+        <h2 className="text-2xl font-bold text-gray-900 mb-6">
+          Produk Toko <span className="text-gray-400 font-normal text-lg">({products.length})</span>
+        </h2>
         {products.length === 0 ? (
           <div className="bg-white rounded-2xl p-12 text-center">
             <Package className="w-12 h-12 text-gray-300 mx-auto mb-4" />
