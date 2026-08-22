@@ -40,7 +40,7 @@ declare global {
 
 const steps = ['Alamat', 'Pembayaran', 'Konfirmasi']
 
-export default function CheckoutPage({ nonce }: { nonce?: string }) {
+export default function CheckoutPage() {
   const [step, setStep] = useState(1)
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('midtrans')
   const [loading, setLoading] = useState(false)
@@ -89,10 +89,6 @@ export default function CheckoutPage({ nonce }: { nonce?: string }) {
         script = document.createElement('script')
         script.src = config.snapJsUrl
         script.setAttribute('data-client-key', config.clientKey)
-        if (nonce) {
-          script.setAttribute('nonce', nonce)
-          script.nonce = nonce
-        }
         document.body.appendChild(script)
       })
       .catch((err) => console.error('Failed to load Midtrans client config:', err))
@@ -102,7 +98,7 @@ export default function CheckoutPage({ nonce }: { nonce?: string }) {
         document.body.removeChild(script)
       }
     }
-  }, [nonce])
+  }, [])
 
   useEffect(() => {
     if (!user) {
