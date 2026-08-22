@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
 /**
+ * COPY RIGHT KOGRAPHH 2026
  * Generates a per-request CSP nonce and sets a Content-Security-Policy
  * header that allows the Midtrans Snap SDK to run.
  *
