@@ -1,5 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import {
+  MIDTRANS_SERVER_KEY,
+  MIDTRANS_CLIENT_KEY,
+  MIDTRANS_SNAP_API_URL,
+  MIDTRANS_CORE_API_URL,
+  assertMidtransServerConfig,
+  midtransAuthHeader,
+  MidtransConfigError,
+} from '@/lib/midtrans-config'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -37,15 +46,49 @@ interface OrderRow {
   user_id: string
 }
 
-// Midtrans API configuration
-const MIDTRANS_SERVER_KEY = process.env.MIDTRANS_SERVER_KEY || ''
-const MIDTRANS_API_URL = process.env.MIDTRANS_SANDBOX === 'true'
-  ? 'https://app.sandbox.midtrans.com/snap/v1'
-  : 'https://app.midtrans.com/snap/v1'
+/**
+ * Validates the transaction payload before it's ever sent to Midtrans.
+ * Returns a human-readable reason string if invalid, or null if OK.
+ * Catches the exact class of bug reported in the field: a product
+ * displayed at one price but charged at another because two different
+ * parts of the code computed the total from different sources.
+ */
+function validatePayload(
+  grossAmount: number,
+  itemDetails: PaymentRequest['itemDetails']
+): string | null {
+  if (!Number.isFinite(grossAmount) || Number.isNaN(grossAmount)) {
+    return 'gross_amount is not a valid number'
+  }
+  if (grossAmount <= 0) {
+    return 'gross_amount must be greater than 0'
+  }
+  if (!Array.isArray(itemDetails) || itemDetails.length === 0) {
+    return 'item_details is empty'
+  }
 
-const MIDTRANS_STATUS_API_URL = process.env.MIDTRANS_SANDBOX === 'true'
-  ? 'https://api.sandbox.midtrans.com/v2'
-  : 'https://api.midtrans.com/v2'
+  let itemsSum = 0
+  for (const item of itemDetails) {
+    if (!Number.isFinite(item.price) || item.price < 0) {
+      return `invalid price for item "${item.name}"`
+    }
+    if (!Number.isFinite(item.quantity) || item.quantity <= 0) {
+      return `invalid quantity for item "${item.name}"`
+    }
+    itemsSum += Math.round(item.price) * item.quantity
+  }
+
+  // Midtrans itself validates that gross_amount === sum(item price * qty),
+  // and rejects the transaction otherwise. We check it here too so a
+  // mismatch (e.g. tax/shipping not represented as its own line item)
+  // surfaces as a clear 400 from OUR api instead of an opaque Midtrans
+  // rejection several layers down.
+  if (Math.abs(itemsSum - Math.round(grossAmount)) > 1) {
+    return `item_details total (${itemsSum}) does not match gross_amount (${Math.round(grossAmount)})`
+  }
+
+  return null
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -53,7 +96,7 @@ export async function POST(request: NextRequest) {
 
     if (!body.orderId || !body.amount || !body.email) {
       return NextResponse.json(
-        { error: 'Missing required fields' },
+        { error: 'Missing required fields', code: 'INVALID_REQUEST' },
         { status: 400 }
       )
     }
@@ -70,7 +113,7 @@ export async function POST(request: NextRequest) {
 
     if (orderFetchError || !existingOrder) {
       return NextResponse.json(
-        { error: 'Order not found' },
+        { error: 'Order not found', code: 'ORDER_NOT_FOUND' },
         { status: 404 }
       )
     }
@@ -90,14 +133,17 @@ export async function POST(request: NextRequest) {
     }
 
     // Server-side amount is authoritative. If the client sent a mismatched
-    // amount, reject the request — indicates tampering or a stale client.
+    // amount, reject the request — indicates tampering or a stale client
+    // (e.g. cart total recalculated differently than what's stored on
+    // the order — see getUnitPrice() in checkout-page.tsx, which is now
+    // the single source of truth for per-item pricing on the frontend).
     const serverAmount = Math.round(order.total_amount)
     if (Math.round(body.amount) !== serverAmount) {
       console.warn(
         `Amount mismatch for order ${order.id}: client sent ${body.amount}, server has ${serverAmount}`
       )
       return NextResponse.json(
-        { error: 'Amount mismatch. Please refresh and try again.' },
+        { error: 'Amount mismatch. Please refresh and try again.', code: 'AMOUNT_MISMATCH' },
         { status: 400 }
       )
     }
@@ -117,6 +163,30 @@ export async function POST(request: NextRequest) {
 
     // For Midtrans payment
     if (body.paymentMethod === 'midtrans') {
+      try {
+        assertMidtransServerConfig()
+      } catch (configError) {
+        if (configError instanceof MidtransConfigError) {
+          // Clear, diagnosable error instead of letting a missing key
+          // surface as a confusing downstream 401/502 from Midtrans.
+          console.error('Midtrans configuration error:', configError.message)
+          return NextResponse.json(
+            { error: 'Midtrans server configuration is missing', code: configError.code },
+            { status: 500 }
+          )
+        }
+        throw configError
+      }
+
+      const validationError = validatePayload(serverAmount, body.itemDetails)
+      if (validationError) {
+        console.warn(`Payload validation failed for order ${order.id}: ${validationError}`)
+        return NextResponse.json(
+          { error: `Invalid payment payload: ${validationError}`, code: 'INVALID_PAYLOAD' },
+          { status: 400 }
+        )
+      }
+
       try {
         const snapRequest = {
           transaction_details: {
@@ -161,22 +231,52 @@ export async function POST(request: NextRequest) {
           },
         }
 
-        const auth = Buffer.from(`${MIDTRANS_SERVER_KEY}:`).toString('base64')
-        const response = await fetch(`${MIDTRANS_API_URL}/transactions`, {
+        const response = await fetch(`${MIDTRANS_SNAP_API_URL}/transactions`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Basic ${auth}`,
+            'Authorization': midtransAuthHeader(),
             'User-Agent': 'KographStore/1.0',
           },
           body: JSON.stringify(snapRequest),
         })
 
         if (!response.ok) {
-          const errorText = await response.text()
-          console.error('Midtrans API error:', errorText)
+          // Log the REAL reason Midtrans rejected the request — status,
+          // message, and full response body — server-side only. The
+          // client only ever sees a generic message + stable error code,
+          // never the Midtrans response contents or our credentials.
+          let midtransErrorBody: unknown = null
+          try {
+            midtransErrorBody = await response.json()
+          } catch {
+            midtransErrorBody = await response.text().catch(() => '(unreadable body)')
+          }
+          console.error('Midtrans transaction creation failed:', {
+            httpStatus: response.status,
+            midtransResponse: midtransErrorBody,
+            orderId: body.orderId,
+          })
+
+          // Midtrans auth failures (wrong key for the selected
+          // sandbox/production endpoint) come back as 401/403 — surface
+          // that distinctly so it's diagnosable from logs at a glance,
+          // instead of everything collapsing into one generic 502.
+          if (response.status === 401 || response.status === 403) {
+            return NextResponse.json(
+              { error: 'Payment gateway rejected our credentials', code: 'MIDTRANS_AUTH_ERROR' },
+              { status: 500 }
+            )
+          }
+          if (response.status >= 400 && response.status < 500) {
+            return NextResponse.json(
+              { error: 'Payment gateway rejected the transaction request', code: 'MIDTRANS_REQUEST_REJECTED' },
+              { status: 400 }
+            )
+          }
+
           return NextResponse.json(
-            { error: 'Failed to create payment transaction' },
+            { error: 'Failed to create payment transaction', code: 'MIDTRANS_UPSTREAM_ERROR' },
             { status: 502 }
           )
         }
@@ -203,30 +303,28 @@ export async function POST(request: NextRequest) {
           success: true,
           status: 'pending',
           token: snapData.token,
+          clientKey: MIDTRANS_CLIENT_KEY,
           redirectUrl: snapData.redirect_url,
           orderId: body.orderId,
           transactionId: snapData.transaction_id,
         })
       } catch (error) {
-        console.error('Error processing Midtrans payment:', error)
+        console.error('Unexpected error creating Midtrans transaction:', error)
         return NextResponse.json(
-          {
-            error: 'Failed to process payment',
-            details: error instanceof Error ? error.message : 'Unknown error',
-          },
+          { error: 'Failed to process payment', code: 'PAYMENT_PROCESSING_ERROR' },
           { status: 500 }
         )
       }
     }
 
     return NextResponse.json(
-      { error: 'Invalid payment method' },
+      { error: 'Invalid payment method', code: 'INVALID_PAYMENT_METHOD' },
       { status: 400 }
     )
   } catch (error) {
-    console.error('API error:', error)
+    console.error('Unexpected API error in /api/payments/snap POST:', error)
     return NextResponse.json(
-      { error: 'Internal server error' },
+      { error: 'Internal server error', code: 'INTERNAL_ERROR' },
       { status: 500 }
     )
   }
@@ -240,7 +338,7 @@ export async function GET(request: NextRequest) {
 
     if (!orderId) {
       return NextResponse.json(
-        { error: 'Order ID is required' },
+        { error: 'Order ID is required', code: 'INVALID_REQUEST' },
         { status: 400 }
       )
     }
@@ -253,7 +351,7 @@ export async function GET(request: NextRequest) {
 
     if (error || !existingOrder) {
       return NextResponse.json(
-        { error: 'Order not found' },
+        { error: 'Order not found', code: 'ORDER_NOT_FOUND' },
         { status: 404 }
       )
     }
@@ -285,12 +383,11 @@ export async function GET(request: NextRequest) {
     // hasn't arrived yet (e.g. local dev without a public webhook URL).
     if (order.payment_status === 'pending' && order.transaction_id && MIDTRANS_SERVER_KEY) {
       try {
-        const auth = Buffer.from(`${MIDTRANS_SERVER_KEY}:`).toString('base64')
         const statusResponse = await fetch(
-          `${MIDTRANS_STATUS_API_URL}/${order.transaction_id}/status`,
+          `${MIDTRANS_CORE_API_URL}/${order.transaction_id}/status`,
           {
             headers: {
-              'Authorization': `Basic ${auth}`,
+              'Authorization': midtransAuthHeader(),
               'User-Agent': 'KographStore/1.0',
             },
           }
@@ -339,6 +436,11 @@ export async function GET(request: NextRequest) {
               })
             }
           }
+        } else {
+          console.error('Midtrans status check failed:', {
+            httpStatus: statusResponse.status,
+            orderId,
+          })
         }
       } catch (statusCheckError) {
         console.error('Error checking Midtrans status:', statusCheckError)
@@ -351,9 +453,9 @@ export async function GET(request: NextRequest) {
       orderId: order.id,
     })
   } catch (error) {
-    console.error('GET API error:', error)
+    console.error('Unexpected API error in /api/payments/snap GET:', error)
     return NextResponse.json(
-      { error: 'Internal server error' },
+      { error: 'Internal server error', code: 'INTERNAL_ERROR' },
       { status: 500 }
     )
   }

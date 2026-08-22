@@ -6,6 +6,20 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
+/**
+ * Single source of truth for a product's actual charged unit price.
+ * Every place in the app that displays or calculates a price MUST use
+ * this — using `product.price` directly in one place and
+ * `product.discount_price ?? product.price` in another is exactly how
+ * a checkout can show one price for a line item ("Rp 150.000") while
+ * charging a different, lower one for the actual subtotal/total sent
+ * to Midtrans ("Rp 50.000").
+ */
+export function getUnitPrice(product: { price: number; discount_price?: number | null } | null | undefined): number {
+  if (!product) return 0
+  return product.discount_price ?? product.price
+}
+
 export function formatCurrency(amount: number) {
   return new Intl.NumberFormat('id-ID', {
     style: 'currency',

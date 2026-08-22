@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'crypto'
 import { createClient } from '@supabase/supabase-js'
+import { MIDTRANS_SERVER_KEY } from '@/lib/midtrans-config'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -36,7 +37,7 @@ interface MidtransNotification {
  * of where the mismatch occurs.
  */
 function verifyNotification(notification: Record<string, unknown>): boolean {
-  const serverKey = process.env.MIDTRANS_SERVER_KEY || ''
+  const serverKey = MIDTRANS_SERVER_KEY
 
   const orderId = String(notification.order_id ?? '')
   const statusCode = String(notification.status_code ?? '')

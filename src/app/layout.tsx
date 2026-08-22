@@ -28,6 +28,15 @@ export const metadata: Metadata = {
     statusBarStyle: 'default',
     title: 'Kograph Store',
   },
+  // Chrome/Chromium-based browsers deprecated relying solely on
+  // apple-mobile-web-app-capable and now want the standards-track
+  // mobile-web-app-capable tag alongside it. Next.js's appleWebApp
+  // option only emits the Apple-specific tag, so the companion one is
+  // added explicitly here — keeping both means iOS Safari and Chrome
+  // are each satisfied without a deprecation warning in either.
+  other: {
+    'mobile-web-app-capable': 'yes',
+  },
   formatDetection: {
     telephone: false,
   },

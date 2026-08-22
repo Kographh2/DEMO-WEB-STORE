@@ -10,7 +10,7 @@ import {
 import { useCart } from '@/components/cart-provider'
 import { useAuth } from '@/components/auth-provider'
 import { supabase } from '@/lib/supabase'
-import { formatCurrency, calculateTax } from '@/lib/utils'
+import { formatCurrency, calculateTax, getUnitPrice } from '@/lib/utils'
 import toast from 'react-hot-toast'
 
 type PaymentMethod = 'cod' | 'midtrans'
@@ -40,7 +40,7 @@ declare global {
 
 const steps = ['Alamat', 'Pembayaran', 'Konfirmasi']
 
-export default function CheckoutPage() {
+export default function CheckoutPage({ nonce }: { nonce?: string }) {
   const [step, setStep] = useState(1)
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('midtrans')
   const [loading, setLoading] = useState(false)
@@ -72,18 +72,37 @@ export default function CheckoutPage() {
     }
   }, [isDigitalOrder, paymentMethod])
 
-  // Load Midtrans Snap library
+  // Load Midtrans Snap library. The client key + correct snap.js URL
+  // (sandbox vs production) are fetched from our own API instead of
+  // relying on NEXT_PUBLIC_MIDTRANS_CLIENT_KEY being inlined at build
+  // time — see src/app/api/payments/client-config/route.ts for why.
   useEffect(() => {
-    const script = document.createElement('script')
-    script.src = 'https://app.sandbox.midtrans.com/snap/snap.js'
-    script.setAttribute('data-client-key', process.env.NEXT_PUBLIC_MIDTRANS_CLIENT_KEY || '')
-    document.body.appendChild(script)
+    let script: HTMLScriptElement | null = null
+
+    fetch('/api/payments/client-config')
+      .then((res) => res.json())
+      .then((config) => {
+        if (!config.clientKey) {
+          console.error('Midtrans client configuration is missing:', config.error)
+          return
+        }
+        script = document.createElement('script')
+        script.src = config.snapJsUrl
+        script.setAttribute('data-client-key', config.clientKey)
+        if (nonce) {
+          script.setAttribute('nonce', nonce)
+          script.nonce = nonce
+        }
+        document.body.appendChild(script)
+      })
+      .catch((err) => console.error('Failed to load Midtrans client config:', err))
+
     return () => {
-      if (document.body.contains(script)) {
+      if (script && document.body.contains(script)) {
         document.body.removeChild(script)
       }
     }
-  }, [])
+  }, [nonce])
 
   useEffect(() => {
     if (!user) {
@@ -195,7 +214,7 @@ export default function CheckoutPage() {
       const orderId = insertedOrder.id
 
       const orderItemsPayload = items.map((item) => {
-        const unitPrice = item.product?.discount_price ?? item.product?.price ?? 0
+        const unitPrice = getUnitPrice(item.product)
         return {
           order_id: orderId,
           product_id: item.product_id,
@@ -242,7 +261,14 @@ export default function CheckoutPage() {
 
       if (!paymentResponse.ok) {
         console.error('Payment error:', paymentData)
-        toast.error(paymentData.error || 'Gagal memproses pembayaran')
+        // A config-related error is our fault, not something a retry
+        // fixes — tell the user plainly instead of implying they did
+        // something wrong.
+        if (paymentData.code === 'MIDTRANS_CONFIG_MISSING' || paymentData.code === 'MIDTRANS_AUTH_ERROR') {
+          toast.error('Pembayaran online sedang bermasalah di sisi kami. Silakan coba lagi nanti atau gunakan metode lain.')
+        } else {
+          toast.error(paymentData.error || 'Gagal memproses pembayaran')
+        }
         return
       }
 
@@ -515,17 +541,28 @@ export default function CheckoutPage() {
               <div className="border-b border-gray-100 pb-4 mb-4">
                 <h3 className="text-sm font-semibold text-gray-700 mb-3">Produk Pesanan</h3>
                 <div className="space-y-3">
-                  {items.map((item) => (
-                    <div key={item.product_id} className="flex justify-between items-start text-sm">
-                      <div>
-                        <p className="font-medium text-gray-900">{item.product?.name}</p>
-                        <p className="text-xs text-gray-500">Jumlah: {item.quantity}</p>
+                  {items.map((item) => {
+                    const unitPrice = getUnitPrice(item.product)
+                    const hasDiscount = !!item.product?.discount_price && item.product.discount_price < item.product.price
+                    return (
+                      <div key={item.product_id} className="flex justify-between items-start text-sm">
+                        <div>
+                          <p className="font-medium text-gray-900">{item.product?.name}</p>
+                          <p className="text-xs text-gray-500">Jumlah: {item.quantity}</p>
+                        </div>
+                        <div className="text-right">
+                          {hasDiscount && (
+                            <p className="text-xs text-gray-400 line-through">
+                              {formatCurrency((item.product?.price ?? 0) * item.quantity)}
+                            </p>
+                          )}
+                          <p className="font-semibold text-gray-900">
+                            {formatCurrency(unitPrice * item.quantity)}
+                          </p>
+                        </div>
                       </div>
-                      <p className="font-semibold text-gray-900">
-                        {formatCurrency(item.product?.price ? item.product.price * item.quantity : 0)}
-                      </p>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               </div>
 
